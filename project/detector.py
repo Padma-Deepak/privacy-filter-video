@@ -10,6 +10,12 @@ Performance fixes:
   • All models (Haar cascades, DNN net, YOLO) loaded ONCE as module-level
     singletons — never re-read from disk per request.
   • Face, plate and screen detection run in PARALLEL via ThreadPoolExecutor.
+
+Entry points:
+  • process_image(...) — single image, returns an output file path + counts.
+  • process_video(...) — short video clip, runs the same per-frame pipeline
+    (process_frame) over every frame and re-encodes an MP4 (video only, no
+    audio track).
 """
 
 import os
@@ -245,12 +251,67 @@ def apply_black_mask(image, x, y, w, h):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Public entry point
+# Single-frame pipeline — shared by both the image and video entry points
+# ──────────────────────────────────────────────────────────────────────────────
+
+def process_frame(image, models_dir: str, executor: ThreadPoolExecutor = None):
+    """
+    Run all three detectors on a single BGR frame and apply the matching
+    context-aware filter to a copy of it.
+
+    Pass a shared `executor` when calling this repeatedly (e.g. once per video
+    frame) to avoid the overhead of spinning up a new thread pool every call.
+
+    Returns (output_image, counts) where counts is
+    {"faces": int, "plates": int, "screens": int}.
+    """
+    output = image.copy()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    if executor is not None:
+        futures = {
+            executor.submit(detect_faces,   image, gray, models_dir): "faces",
+            executor.submit(detect_plates,  gray):                     "plates",
+            executor.submit(detect_screens, image):                    "screens",
+        }
+        results_map = {futures[f]: f.result() for f in as_completed(futures)}
+    else:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {
+                pool.submit(detect_faces,   image, gray, models_dir): "faces",
+                pool.submit(detect_plates,  gray):                     "plates",
+                pool.submit(detect_screens, image):                    "screens",
+            }
+            results_map = {futures[f]: f.result() for f in as_completed(futures)}
+
+    face_boxes   = results_map["faces"]
+    plate_boxes  = results_map["plates"]
+    screen_boxes = results_map["screens"]
+
+    for (x, y, w, h) in face_boxes:
+        apply_gaussian_blur(output, x, y, w, h)   # Gaussian blur
+
+    for (x, y, w, h) in plate_boxes:
+        apply_black_mask(output, x, y, w, h)       # Black mask
+
+    for (x, y, w, h) in screen_boxes:
+        apply_pixelation(output, x, y, w, h)       # Pixelation
+
+    counts = {
+        "faces":   len(face_boxes),
+        "plates":  len(plate_boxes),
+        "screens": len(screen_boxes),
+    }
+    return output, counts
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public entry point — images
 # ──────────────────────────────────────────────────────────────────────────────
 
 def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
     """
-    Context-aware privacy filtering pipeline.
+    Context-aware privacy filtering pipeline for a single image.
 
     Detectors run in PARALLEL (ThreadPoolExecutor) so total time ≈ slowest
     single detector rather than sum of all three.
@@ -265,36 +326,8 @@ def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
     if image is None:
         raise ValueError(f"Could not read image: {input_path}")
 
-    output = image.copy()
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    output, counts = process_frame(image, models_dir)
 
-    # ── Run all 3 detectors in parallel ───────────────────────────────────────
-    results_map = {}
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {
-            pool.submit(detect_faces,   image, gray, models_dir): "faces",
-            pool.submit(detect_plates,  gray):                     "plates",
-            pool.submit(detect_screens, image):                    "screens",
-        }
-        for future in as_completed(futures):
-            key = futures[future]
-            results_map[key] = future.result()
-
-    face_boxes   = results_map["faces"]
-    plate_boxes  = results_map["plates"]
-    screen_boxes = results_map["screens"]
-
-    # ── Apply context-aware filters ───────────────────────────────────────────
-    for (x, y, w, h) in face_boxes:
-        apply_gaussian_blur(output, x, y, w, h)   # Gaussian blur
-
-    for (x, y, w, h) in plate_boxes:
-        apply_black_mask(output, x, y, w, h)       # Black mask
-
-    for (x, y, w, h) in screen_boxes:
-        apply_pixelation(output, x, y, w, h)       # Pixelation
-
-    # ── Save ──────────────────────────────────────────────────────────────────
     os.makedirs(outputs_dir, exist_ok=True)
     ext = os.path.splitext(input_path)[1].lower() or ".jpg"
     output_path = os.path.join(outputs_dir, f"{uuid.uuid4().hex}{ext}")
@@ -302,7 +335,94 @@ def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
 
     return {
         "output_path":   output_path,
-        "faces_found":   len(face_boxes),
-        "plates_found":  len(plate_boxes),
-        "screens_found": len(screen_boxes),
+        "faces_found":   counts["faces"],
+        "plates_found":  counts["plates"],
+        "screens_found": counts["screens"],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public entry point — video
+# ──────────────────────────────────────────────────────────────────────────────
+
+def process_video(
+    input_path: str,
+    outputs_dir: str,
+    models_dir: str,
+    max_duration_sec: float = 12.0,
+    max_width: int = 960,
+) -> dict:
+    """
+    Context-aware privacy filtering pipeline for a short video clip.
+
+    Reads the clip frame-by-frame, runs the same detect → filter pipeline used
+    for images on every frame (sharing one ThreadPoolExecutor across frames),
+    and re-encodes the result as H.264/mp4v MP4 (no audio track — OpenCV's
+    VideoCapture/VideoWriter is video-only).
+
+    `max_duration_sec` caps processing time and output size for the demo app —
+    frames beyond the cap are dropped and `truncated` is reported True.
+    `max_width` downsizes very large frames before detection for speed.
+
+    Returns dict:
+        output_path      : str
+        faces_found      : int  (summed across all processed frames)
+        plates_found     : int
+        screens_found    : int
+        frames_processed : int
+        truncated        : bool
+    """
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not read video: {input_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+    total_available = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    max_frames = int(max_duration_sec * fps) if max_duration_sec else total_available
+
+    src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    scale = min(1.0, max_width / src_w) if src_w > max_width else 1.0
+    out_w, out_h = max(1, int(src_w * scale)), max(1, int(src_h * scale))
+
+    os.makedirs(outputs_dir, exist_ok=True)
+    output_path = os.path.join(outputs_dir, f"{uuid.uuid4().hex}.mp4")
+    writer = cv2.VideoWriter(
+        output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (out_w, out_h)
+    )
+    if not writer.isOpened():
+        cap.release()
+        raise ValueError("Could not open video writer for output.")
+
+    totals = {"faces": 0, "plates": 0, "screens": 0}
+    frame_idx = 0
+    try:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            while frame_idx < max_frames:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if scale != 1.0:
+                    frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
+                annotated, counts = process_frame(frame, models_dir, executor=pool)
+                writer.write(annotated)
+                for k in totals:
+                    totals[k] += counts[k]
+                frame_idx += 1
+    finally:
+        cap.release()
+        writer.release()
+
+    if frame_idx == 0:
+        try: os.remove(output_path)
+        except OSError: pass
+        raise ValueError("No readable frames found in video.")
+
+    return {
+        "output_path":      output_path,
+        "faces_found":      totals["faces"],
+        "plates_found":     totals["plates"],
+        "screens_found":    totals["screens"],
+        "frames_processed": frame_idx,
+        "truncated":        frame_idx >= max_frames and (total_available == 0 or frame_idx < total_available),
     }

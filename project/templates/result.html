@@ -20,7 +20,13 @@
       </div>
 
       {% if faces == 0 and plates == 0 and screens == 0 %}
-      <div class="alert alert--warn">No sensitive regions detected — image returned unchanged.</div>
+      <div class="alert alert--warn">No sensitive regions detected — {{ 'video' if media_type == 'video' else 'image' }} returned unchanged.</div>
+      {% endif %}
+
+      {% if media_type == 'video' %}
+      <div class="alert alert--info">
+        🎬 {{ frames }} frame{{ 's' if frames != 1 else '' }} processed{% if truncated %} — clip was trimmed to ~12s for this demo{% endif %}. Output has no audio track.
+      </div>
       {% endif %}
     </header>
 
@@ -28,18 +34,26 @@
     <div class="compare-grid">
       <div class="compare-panel">
         <div class="compare-panel__label">Original</div>
+        {% if media_type == 'video' %}
+        <video class="compare-img" src="{{ original }}" controls muted playsinline loop></video>
+        {% else %}
         <img class="compare-img" src="{{ original }}" alt="Original uploaded image" />
+        {% endif %}
       </div>
       <div class="compare-divider">→</div>
       <div class="compare-panel">
         <div class="compare-panel__label compare-panel__label--processed">Processed</div>
+        {% if media_type == 'video' %}
+        <video class="compare-img" src="{{ processed }}" controls muted playsinline loop></video>
+        {% else %}
         <img class="compare-img" src="{{ processed }}" alt="Privacy-filtered image" />
+        {% endif %}
       </div>
     </div>
 
     <!-- Actions -->
     <div class="actions-row">
-      <a class="btn btn--outline" href="/">← Process another image</a>
+      <a class="btn btn--outline" href="/">← Process another file</a>
       <a class="btn"
          href="{{ processed }}"
          download="privacy_filtered.{{ ext }}"
@@ -48,7 +62,7 @@
       </a>
     </div>
 
-    <p class="privacy-note">🛡️ Not stored on any server — images never left your machine.</p>
+    <p class="privacy-note">🛡️ Not stored on any server — nothing you upload ever leaves your machine.</p>
   </div>
 </body>
 </html>

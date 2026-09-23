@@ -1,4 +1,4 @@
-flask
-opencv-python
-numpy
-ultralytics
+flask>=3.0,<4
+opencv-python>=4.9,<5
+numpy>=1.26,<3
+ultralytics>=8.2,<9

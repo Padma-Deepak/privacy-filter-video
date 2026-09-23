@@ -1,6 +1,6 @@
 # Context-Aware Privacy Filtering System
 
-A locally-run Python web application that automatically detects and anonymizes sensitive visual information in uploaded images using **context-appropriate filtering techniques**:
+A locally-run Python web application that automatically detects and anonymizes sensitive visual information in uploaded **images and short videos** using **context-appropriate filtering techniques**:
 
 | Detected Region | Filter Applied |
 |---|---|
@@ -8,7 +8,7 @@ A locally-run Python web application that automatically detects and anonymizes s
 | License plates | Black mask (solid block) |
 | Screens, phones, laptops | Pixelation / mosaic |
 
-Detection uses OpenCV Haar Cascades, DNN SSD, and YOLOv8. No image data is ever sent to an external server — the entire pipeline runs on your machine.
+Detection uses OpenCV Haar Cascades, DNN SSD, and YOLOv8. No image or video data is ever sent to an external server — the entire pipeline runs on your machine.
 
 ---
 
@@ -52,12 +52,20 @@ python app.py
 
 Open: `http://127.0.0.1:5000`
 
-Upload a JPEG, PNG, BMP, or WEBP image. The system will:
+Upload a JPEG, PNG, BMP, or WEBP **image**, or an MP4, MOV, AVI, MKV, or WEBM **video**. The system will:
 1. Detect faces → apply Gaussian blur
 2. Detect license plates → apply black mask
 3. Detect screens / phones / laptops → apply pixelation
 
-The processed image downloads automatically. Both the upload and output are deleted from disk immediately after download.
+For video, every frame runs through the same detect → filter pipeline used for images, and the result is re-encoded as an MP4.
+
+The processed file is shown side-by-side with the original and can be downloaded from the results page. Both the upload and output are deleted from disk immediately after the response is sent.
+
+### Video notes
+
+- Clips are capped at **~12 seconds** of processing (later frames are dropped) to keep processing time and page size reasonable for a demo app — this is configurable via `max_duration_sec` in `detector.process_video()`.
+- Frames wider than 960px are downscaled before detection for speed.
+- Output video has **no audio track** — OpenCV's `VideoCapture`/`VideoWriter` are video-only.
 
 ---
 
@@ -97,3 +105,5 @@ project/
 - YOLOv8 screen detection requires reasonable object size and clarity
 - License plate detection optimized for rectangular formats; non-standard layouts may be missed
 - False positives possible on geometric patterns resembling license plates
+- Video processing is capped at ~12 seconds and drops audio (see [Video notes](#video-notes))
+- Detection runs independently per video frame — there is no temporal tracking, so a detection can flicker on/off between adjacent frames

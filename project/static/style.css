@@ -235,6 +235,16 @@ body {
   font-size: 0.88rem;
 }
 
+/* Info alert (video processing notes) */
+.alert--info {
+  background: rgba(0,180,166,0.1);
+  border: 1px solid rgba(0,180,166,0.3);
+  color: #4dd9d0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 0.88rem;
+}
+
 /* ── Side-by-side grid ────────────────────────────────────────────────────── */
 .compare-grid {
   display: flex;

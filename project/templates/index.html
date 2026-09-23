@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Context-Aware Privacy Filtering System</title>
-  <meta name="description" content="Upload an image — faces, license plates, and screens are automatically anonymized. Fully local." />
+  <meta name="description" content="Upload an image or short video — faces, license plates, and screens are automatically anonymized. Fully local." />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
@@ -12,7 +12,7 @@
     <div class="card">
       <div class="card__icon">🔒</div>
       <h1 class="card__title">Context-Aware Privacy Filtering System</h1>
-      <p class="card__sub">Upload an image — faces, license plates, and screens will be automatically anonymized</p>
+      <p class="card__sub">Upload an image or short video — faces, license plates, and screens will be automatically anonymized</p>
 
       <div class="badge-row">
         <span class="badge badge--blur">😐 Faces → Gaussian Blur</span>
@@ -27,18 +27,19 @@
       <form method="POST" action="/process" enctype="multipart/form-data" class="upload-form" id="upload-form">
         <label class="file-label" for="image-input">
           <span class="file-label__icon">📁</span>
-          <span class="file-label__text" id="file-label-text">Choose an image file…</span>
+          <span class="file-label__text" id="file-label-text">Choose an image or video file…</span>
           <input type="file" name="image" id="image-input"
-                 accept="image/jpeg,image/png,image/bmp,image/webp"
+                 accept="image/jpeg,image/png,image/bmp,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm"
                  class="file-input" required />
         </label>
         <button type="submit" class="btn" id="submit-btn">
-          <span class="btn__text">Process Image</span>
+          <span class="btn__text">Process File</span>
           <span class="btn__spinner" hidden aria-hidden="true"></span>
         </button>
       </form>
 
-      <p class="privacy-note">🛡️ Your image is processed locally and never stored.</p>
+      <p class="privacy-note">🛡️ Your file is processed locally and never stored.</p>
+      <p class="privacy-note">🎬 Videos are capped at ~12 seconds and re-encoded without audio for this demo.</p>
     </div>
   </div>
 
