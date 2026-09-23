@@ -31,4 +31,4 @@ Then open `http://127.0.0.1:5000`.
 └── instructions.txt     ← original PRD / build spec
 ```
 
-Based on the original [Context-Aware Privacy Filtering System](https://github.com/Hrishikesh-Prasad-R/privacy-filtering-system), extended here with video support and reliability fixes.
+
