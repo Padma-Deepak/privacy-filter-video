@@ -301,6 +301,40 @@ def apply_black_mask(image, x, y, w, h):
 # Single-frame pipeline — shared by both the image and video entry points
 # ──────────────────────────────────────────────────────────────────────────────
 
+def detect_all(image, models_dir: str, executor: ThreadPoolExecutor = None) -> dict:
+    """
+    Run all three detectors on a single BGR frame and return their raw boxes,
+    without applying any redaction filter.
+
+    Pass a shared `executor` when calling this repeatedly (e.g. once per video
+    frame) to avoid the overhead of spinning up a new thread pool every call.
+
+    Returns {"faces": [(x,y,w,h), ...], "plates": [...], "screens": [...]}.
+
+    Split out from process_frame() (below) so a caller — the future video
+    pipeline in project/core/video.py — can route these boxes through
+    tracking before redaction, while process_frame()/process_image() keep
+    detecting and redacting in one step, unchanged.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    if executor is not None:
+        futures = {
+            executor.submit(detect_faces,   image, gray, models_dir): "faces",
+            executor.submit(detect_plates,  gray):                     "plates",
+            executor.submit(detect_screens, image):                    "screens",
+        }
+        return {futures[f]: f.result() for f in as_completed(futures)}
+    else:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {
+                pool.submit(detect_faces,   image, gray, models_dir): "faces",
+                pool.submit(detect_plates,  gray):                     "plates",
+                pool.submit(detect_screens, image):                    "screens",
+            }
+            return {futures[f]: f.result() for f in as_completed(futures)}
+
+
 def process_frame(image, models_dir: str, executor: ThreadPoolExecutor = None):
     """
     Run all three detectors on a single BGR frame and apply the matching
@@ -313,23 +347,7 @@ def process_frame(image, models_dir: str, executor: ThreadPoolExecutor = None):
     {"faces": int, "plates": int, "screens": int}.
     """
     output = image.copy()
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    if executor is not None:
-        futures = {
-            executor.submit(detect_faces,   image, gray, models_dir): "faces",
-            executor.submit(detect_plates,  gray):                     "plates",
-            executor.submit(detect_screens, image):                    "screens",
-        }
-        results_map = {futures[f]: f.result() for f in as_completed(futures)}
-    else:
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = {
-                pool.submit(detect_faces,   image, gray, models_dir): "faces",
-                pool.submit(detect_plates,  gray):                     "plates",
-                pool.submit(detect_screens, image):                    "screens",
-            }
-            results_map = {futures[f]: f.result() for f in as_completed(futures)}
+    results_map = detect_all(image, models_dir, executor=executor)
 
     face_boxes   = results_map["faces"]
     plate_boxes  = results_map["plates"]
