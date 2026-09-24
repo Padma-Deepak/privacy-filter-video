@@ -30,6 +30,19 @@ MIME_TYPES = {
 for d in (UPLOADS_DIR, OUTPUTS_DIR, MODELS_DIR):
     os.makedirs(d, exist_ok=True)
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
+# Off and localhost-only by default — Flask's debug mode runs the Werkzeug
+# interactive debugger, which allows arbitrary code execution from the
+# browser if it's ever reachable from a real network. Both are opt-in via
+# environment variables for local development only.
+DEBUG = _env_flag("FLASK_DEBUG", False)
+HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
+PORT = int(os.environ.get("FLASK_PORT", "5000"))
+
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload cap
@@ -82,8 +95,9 @@ def process():
         # Encode both files for embedding — then delete temp files
         original_data  = _to_data_url(upload_path, ext)
         processed_data = _to_data_url(output_path, out_ext)
-    except Exception as exc:
-        abort(500, description=f"Processing failed: {exc}")
+    except Exception:
+        app.logger.exception("Processing failed for upload %s", upload_path)
+        abort(500, description="Processing failed. Please try a different file.")
     finally:
         for p in (upload_path, output_path):
             if p:
@@ -118,4 +132,4 @@ def server_error(e):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=DEBUG, host=HOST, port=PORT)
