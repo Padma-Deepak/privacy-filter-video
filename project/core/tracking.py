@@ -62,6 +62,9 @@ class TrackedBox:
     box: Box                # final redaction region: padded union(raw, smoothed) — always covers the raw detection
     source: str              # "detected" (a raw detection matched this frame) or "gap_fill"
     raw_box: "Box | None"    # the exact raw detection this frame, if any (None for gap_fill)
+    tracker_box: Box         # the tracker's own unpadded estimate: smoothed box (detected) or extrapolated
+                              # last-known box (gap_fill) — before the raw-box union and padding are applied.
+                              # Exposed for scripts/debug_tracking.py; redaction always uses `box`, never this.
 
 
 def _to_xyxy(box: Box) -> tuple[float, float, float, float]:
@@ -177,8 +180,10 @@ class ClassTracker:
             # guarantees full raw-box coverage regardless of pad_pct.
             region = union_box(raw_box, smoothed)
             region = pad_box(region, self._pad_pct, frame_w, frame_h)
+            smoothed_int = tuple(int(round(v)) for v in smoothed)
             results.append(TrackedBox(
-                track_id=self._external_id(internal_id), box=region, source="detected", raw_box=raw_box,
+                track_id=self._external_id(internal_id), box=region, source="detected",
+                raw_box=raw_box, tracker_box=smoothed_int,
             ))
 
         for internal_id in list(self._history.keys()):
@@ -198,8 +203,10 @@ class ClassTracker:
                 box = (x + vx * state["age"], y + vy * state["age"], w, h)
 
             region = pad_box(box, self._pad_pct, frame_w, frame_h)
+            box_int = tuple(int(round(v)) for v in box)
             results.append(TrackedBox(
-                track_id=self._external_id(internal_id), box=region, source="gap_fill", raw_box=None,
+                track_id=self._external_id(internal_id), box=region, source="gap_fill",
+                raw_box=None, tracker_box=box_int,
             ))
 
         return results
