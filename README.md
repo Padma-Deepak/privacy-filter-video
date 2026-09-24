@@ -94,6 +94,16 @@ Then open `http://127.0.0.1:5000`, upload an image or short video, and download 
 
 Full setup (including the optional DNN face model), architecture notes, and the complete list of known limitations live in **[project/README.md](project/README.md)**.
 
+## Testing
+
+```bash
+python -m pytest tests/
+```
+
+Synthetic boxes and small sample/generated clips only, per `CLAUDE.md` — no large media files in the test suite.
+
+**Known gap — rotation metadata:** phone-recorded portrait clips often carry a rotation hint in container metadata rather than physically rotated pixels. This machine's ffmpeg build (9.0.2) could not be made to write that metadata into a test fixture — five different documented methods (`-metadata rotate=`, remux-only, the `h264_metadata` bitstream filter as both a tag and an SEI option, and the `-rotate` encoder option) all failed or produced metadata `ffprobe` itself couldn't decode back out, on this build specifically. Phase 1's video pipeline (`project/core/video.py`) reads rotation via `ffprobe` and compensates with `cv2.rotate()` itself rather than trusting OpenCV's auto-orientation flags — its unit tests mock the ffprobe rotation value rather than depending on a real fixture this environment can't produce. There is no automated end-to-end test with a real rotated file: check real portrait phone clips manually before relying on this path.
+
 ## Repo layout
 
 ```
