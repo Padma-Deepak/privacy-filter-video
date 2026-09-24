@@ -94,6 +94,16 @@ Then open `http://127.0.0.1:5000`, upload an image or short video, and download 
 
 Full setup (including the optional DNN face model), architecture notes, and the complete list of known limitations live in **[project/README.md](project/README.md)**.
 
+## Performance: environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MAX_CLIP_SECONDS` | unset (unlimited) | Caps how much of a clip is processed. |
+| `DETECTION_STRIDE` | `1` (every frame) | Run detection every Kth frame; the tracker's gap-fill bridges the rest. See warning below. |
+| `PRIVACY_PROFILE` | unset | Set to `journalist` to force `DETECTION_STRIDE=1` regardless of the setting above (a stopgap ahead of a real profile system — see `PHASES.md` Phase 4). |
+
+**`DETECTION_STRIDE` trade-off — read before using it.** Face/plate detection is the dominant per-frame cost (measured: ~376ms and ~176ms/frame respectively on a real portrait clip, vs ~1ms for tracking and ~77ms for redaction — see `docs/HANDOFF.md` for the full profiling breakdown). Setting `DETECTION_STRIDE=K` runs the detectors every Kth frame instead of every frame, and lets the existing tracker gap-fill the skipped frames. This does **not** weaken the core guarantee that every raw detection is redacted the instant it's found — that guarantee only ever applies to frames detection actually runs on. What it does mean: **a face, plate, or screen that first appears on a skipped frame is not redacted until the next detection frame runs — up to (K-1) frames of exposure for something brand new.** An already-tracked object keeps being redacted via gap-fill in the meantime; a genuinely new one does not. This is why Journalist mode always forces K=1 — CLAUDE.md's non-negotiable #2 ("a missed detection is a failure") means recall is never traded for speed in that profile.
+
 ## Testing
 
 ```bash

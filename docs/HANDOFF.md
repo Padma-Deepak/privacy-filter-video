@@ -94,29 +94,101 @@ a6a7aad Add process_video_streaming(): the main video pipeline
 6db26ae Wire app.py to the new streaming video pipeline
 405de28 Add scripts/debug_tracking.py for visual tracking debugging
 0ad1029 Fix gap-fill ghost-box accumulation on noisy plate false positives
+79101a8 Add detection-stride (fast mode): detect every Kth frame
+28674c8 Fix Original preview not loading for .mov/.avi/.mkv uploads
 ```
 
-21 commits total, all local to the `upgrade` branch (see §7 — none of this has been pushed anywhere yet). 76 tests pass as of the last commit (`python -m pytest tests/`).
+23 commits total, all local to the `upgrade` branch (see §7 — none of this has been pushed anywhere yet). 89 tests pass as of the last commit (`python -m pytest tests/`).
+
+### Investigation round 2 — real footage from an actual iPhone, findings below
+
+Commit `0ad1029` was from a first pass using synthetic simulation only. `79101a8`/`28674c8` plus the analysis in §4 are from a second, deeper investigation using a real ~15s portrait iPhone clip, source-copied down to a 4-second/122-frame segment (`ffmpeg -t 4 -c copy`) and kept entirely outside the repo (a temp directory, not committed anywhere) for iteration speed. That segment is machine-local and ephemeral — regenerate your own 4s segment the same way (`ffmpeg -y -i <original> -t 4 -c copy segment.mov`, run outside the repo) if you need to re-run any of this investigation's scripts.
 
 ---
 
 ## 4. Current status and known issues — read this before trusting the pipeline
 
-**Phase 1 is not done.** The `PHASES.md` "done when" bar for Phase 1 is "a 60-second 1080p clip processes without hitting a size cap, the output keeps its audio, the boxes don't flicker on the sample clips, and tests pass" — the last real-clip test did **not** clear that bar. Here's exactly what was found, tested with synthetic data, and what's still unverified on real footage.
+**Phase 1 is not done.** The `PHASES.md` "done when" bar for Phase 1 is "a 60-second 1080p clip processes without hitting a size cap, the output keeps its audio, the boxes don't flicker on the sample clips, and tests pass." Real-clip testing found real problems; some are fixed and confirmed on real footage below, one is fixed but not yet re-verified visually, and one is understood but deliberately not patched. Read all of it before assuming this is done.
 
-**Real-clip test: a 15-second portrait phone video (a restaurant/indoor scene, one or more real faces, real audio).** Results:
+**Test setup for round 2:** a real ~15s portrait iPhone `.mov` (1080×1920, h264+aac+a second Apple spatial-audio track, **no rotation metadata at all** — it's natively portrait, so the orientation issue reported was never a rotation bug), cut to a 4-second/122-frame segment with `ffmpeg -t 4 -c copy` and kept outside the repo. Two real people in frame, indoor restaurant/cafe setting with a hanging lamp and visible ceiling beams.
 
-1. **719 "plates masked" and a large black region across part of the frame.** Investigated and root-caused: the contour-based plate detector (already documented as noisy in `docs/AUDIT.md` — false positives on rectangular architecture) fired frequent, spatially-random false positives on doorframes/ceiling lines in the background. With the original 30-frame gap-fill buffer (same as faces), every one-off false trigger stayed "alive" and redacted for about a second, and on a busy background several accumulated into 13+ simultaneous overlapping boxes that visually merged into one large blocked-out region. No single detection was ever oversized — this was a volume/accumulation problem.
-   - **Fix applied** (commit `0ad1029`): plates now default to a 5-frame gap-fill buffer instead of 30 (`DEFAULT_TRACK_BUFFER_BY_CLASS` in `project/core/video.py`), configurable via `track_buffer_by_class`. Verified with a seeded synthetic simulation reproducing the same noisy-detection pattern: max simultaneous ghost boxes dropped from 13+ to 5. Two permanent regression tests added (`tests/test_tracking.py`).
-   - **Not yet confirmed:** whether this fix actually resolves the *visible* black-region problem on the real clip that produced it. The synthetic simulation is a reasonable proxy but is not the same as watching the real output. **Re-run the real clip and check visually before trusting this is fixed.**
-2. **"Blocky patches over people"** — reported during testing, **not yet investigated at all.** No root cause identified. Possible directions to check first: pixelation (the screens filter) landing on people rather than actual screens (a YOLO misclassification?), or plate/contour false positives landing on clothing/skin rather than architecture. Start by running `scripts/debug_tracking.py` on the same clip and looking at which class (green box label) is drawing over people.
-3. **The "Original" video panel not loading in the browser result page** — reported during testing, **not yet investigated at all.** The uploaded file was a `.mov`. One plausible direction: `project/app.py`'s `_to_data_url()` embeds the original file as a `data:video/quicktime;base64,...` URL, and Chrome/most browsers don't reliably play inline QuickTime-codec content via a `<video>` tag's `src` the way they do MP4/H.264 — worth checking whether this reproduces with a `.mp4` upload instead of `.mov`, which would confirm it's a MIME/codec-support issue rather than a data-encoding bug.
+### 4.1 Plate ghost-box accumulation — fixed, confirmed on real footage, one separate issue remains
 
-**Also open, not bugs so much as incomplete verification:**
+Original symptom: 719 "plates masked" and a large black region across part of the frame. Root cause (commit `0ad1029`): the noisy contour plate detector fired frequent false positives on architecture, and the original 30-frame gap-fill buffer let each one-off trigger stay redacted for ~1s, accumulating into 13+ simultaneous ghost boxes that visually merged.
 
-- **Rotation handling is only verified with synthetic, mocked `ffprobe` values and a physically-transposed (not metadata-tagged) test clip** — see `tests/test_video_probe.py` and the "Testing" section of the root `README.md`. The machine this was built on has an ffmpeg build (9.0.2) that could not be made to write real rotation metadata into a test file despite trying five documented methods, so there is **no automated test with a real rotation-tagged file**. This needs manual verification with real portrait phone clips (which, per the point above, you now have reason to do anyway) before rotation handling can be trusted for real iPhone/Android footage.
-- **Processing a real ~15s phone clip took roughly 8–9 minutes** on the machine this was tested on. This is expected given the current pipeline runs full-resolution Haar-cascade detection on every single frame with no frame-skipping — `PHASES.md`'s Phase 1 item 3 ("run detection every K frames, propagate boxes between detections with the tracker, default K=1") was never implemented. This isn't correctness-broken, but it makes iterating on real clips painfully slow — worth prioritizing before doing more real-clip QA.
-- **Video-clip tracking evaluation is "pending annotations."** `eval/video_gt/README.md` documents the CVAT annotation process, but **no real annotations exist yet** — that's a manual task (see §6). Until they exist, there is no measured track-level or frame-level leak rate for video, only the image-based WIDER FACE numbers in §3.
+**Confirmed on the real 4s segment after the fix** (`DEFAULT_TRACK_BUFFER_BY_CLASS["plates"] = 5`):
+
+| | count |
+|---|--:|
+| Plates per frame | min 2, max 6, avg 4.75 |
+| Total detected / gap-fill | 297 / 283 |
+
+Down from the simulated 13+ simultaneous boxes — the accumulation fix works on real content, not just synthetic data.
+
+**Still open — a separate issue, not fixed:** the single largest plate box observed was a genuinely large **raw detection**, not a tracking artifact: `(0, 0, 789, 325)`, 12.4% of the frame, on the lamp/ceiling area, `source="detected"`. The contour detector itself is producing oversized bounding boxes on architecture, independent of gap-fill. This is a detector-quality problem — `PHASES.md` Phase 2 (a trained plate detector replacing the contour heuristic) is the real fix, not something patchable in the tracker.
+
+Debug visualization confirming this — real footage, green/yellow/red overlay with track IDs — is machine-local (see the note above about the test segment); regenerate with `python scripts/debug_tracking.py <your 4s segment>`.
+
+### 4.2 "Blocky patches over people" — cause found, not fixed (deliberately)
+
+**Not screens/pixelation.** Screens detected 0 boxes throughout the entire segment — YOLO is not misfiring on people.
+
+**It's faces, via Gaussian blur, and the Haar cascade is flooding with false positives on this content:**
+
+| | count |
+|---|--:|
+| Faces per frame | min 4, max **25**, avg **20.6** |
+| Total detected / gap-fill | 573 / 1940 |
+| Largest single face box | **882×882px, 37.5% of the frame**, `source="gap_fill"` |
+
+There are only 2 real people in frame. Averaging 20.6 "face" boxes per frame — visually confirmed as scattered across clothing, torsos, and hair, not just the two real faces — means most of what's being blurred isn't a face at all. The 882×882 box is worth being precise about: **it did not grow from smoothing or velocity extrapolation** — gap-fill extrapolation only ever shifts a box's *position*, never its width/height (verified by reading the code, not assumed), so a box that large means Haar itself produced an oversized raw false-positive detection at some point, which then got a full 30-frame gap-fill life (faces' buffer was intentionally left at 30, unlike plates — see below).
+
+**Why this wasn't fixed:** two candidate fixes exist, and neither is "small and clearly correct":
+1. **Shorten faces' gap-fill buffer the same way plates' was.** Rejected without measurement: unlike plates (where there's no established recall value in tracking a heuristic that's mostly noise), faces are the one class this whole pipeline is built around, and `CLAUDE.md` non-negotiable #2 is explicit — "a missed face is a failure." A shorter buffer means a real face that Haar briefly loses (a known, documented flicker problem from the original `docs/AUDIT.md` audit) un-blurs sooner. That's a recall-vs-noise trade-off, and `CLAUDE.md` non-negotiable #6 requires numbers before making that call, not a guess under time pressure.
+2. **Bound gap-fill's velocity extrapolation displacement** (cap how far a track can drift during the buffer window, regardless of how large/noisy the computed velocity is). This is a real, safe, recall-neutral idea — worth doing — but it would not have prevented the 882×882 box specifically (that was a *size* problem from the raw detection, not a *drift* problem), so implementing it here would have been solving a different, smaller problem while the actual investigation budget was needed for confirmed items. Left as a suggested small improvement for whoever picks up Phase 2, not implemented.
+
+**The real fix is `PHASES.md` Phase 2** — comparing face detectors by measured recall/FPS and replacing Haar's default role. This flooding is a strong, concrete data point for that comparison: whatever replaces Haar needs to be measured against this exact failure mode, not just WIDER FACE recall.
+
+### 4.3 "Original" panel not loading — fixed, confirmed
+
+Root cause confirmed: `MIME_TYPES["mov"] = "video/quicktime"` in `project/app.py`, and Chrome (and most non-Safari browsers) does not reliably play `video/quicktime` inline via a `<video>` tag, especially from a `data:` URI. The processed panel never had this problem because the pipeline always outputs `.mp4`.
+
+**Fix** (commit `28674c8`): `_preview_data_url()` remuxes non-web-playable containers (`.mov`/`.avi`/`.mkv`) to a clean single-video+audio MP4 for the preview only — a stream copy, not a re-encode (~0.1s on the test segment), so it's fast and lossless. The actual uploaded file and the processing pipeline are untouched. Falls back to the raw file's own MIME if the remux fails, so this can't turn into a 500. 5 tests, using a small synthetic clip (no real footage in the test suite).
+
+### 4.4 Processing speed — profiled, fast mode implemented
+
+Per-stage timing on the real 4s/122-frame segment, measured **sequentially** to isolate each stage (production runs faces/plates/screens in parallel via a `ThreadPoolExecutor`, so real per-frame wall time is closer to the slowest of the three plus the fixed costs, not their sum — treat the sequential numbers below as relative cost, not literal production timing):
+
+| Stage | ms/frame | % of sequential total |
+|---|--:|--:|
+| Face detection (Haar+DNN) | 376.07 | 55% |
+| Plate detection (Haar+contour) | 176.24 | 26% |
+| Redaction (all filters) | 76.88 | 11% |
+| Screen detection (YOLO) | 26.89 | 4% |
+| Rotation + resize | 21.97 | 3% |
+| Tracking | 0.96 | <1% |
+| Decode | 1.00 | <1% |
+
+Face and plate detection dominate — exactly the two Haar-cascade-based detectors, consistent with Phase 0's baseline already showing Haar at ~2 FPS standalone.
+
+**Implemented** (commit `79101a8`): `detection_stride` (env var `DETECTION_STRIDE`, default 1 = every frame). Detecting every Kth frame and letting the tracker's existing gap-fill bridge the rest cuts detector calls ~K-fold for free — no new tracking logic needed, since a skipped frame just feeds zero raw boxes to the trackers, which already produces `source="gap_fill"` entries via the same mechanism as §4.1's fix.
+
+**End-to-end FPS measured on the real segment** (includes encode/mux, not just detection):
+
+| K | FPS | Faces detected | Speedup vs K=1 |
+|--:|--:|--:|--:|
+| 1 | 1.76 | 573 | — |
+| 2 | 2.72 | 274 | 1.55× |
+| 3 | 3.12 | 190 | 1.77× |
+
+Diminishing returns are expected and observed: redaction, tracking, and the one-time encode/mux cost don't shrink with stride, only detector calls do, which caps how much speedup is available.
+
+**The trade-off — this is not free, and it is documented in three places** (`project/core/video.py`'s docstring, `README.md`'s new "Performance" section, and here): with `K > 1`, a face/plate/screen that **first appears on a skipped frame is not redacted until the next detection frame runs — up to (K-1) frames of exposure.** This does not weaken the "every raw detection is redacted the frame it's found" guarantee (still exactly true on every frame detection actually runs), it just changes how often that check happens. Because of this, `PRIVACY_PROFILE=journalist` forces `DETECTION_STRIDE` back to 1 regardless of the env var — a stopgap since Phase 4's real profile system doesn't exist yet, but Journalist mode must never trade recall for speed. 6 tests added, including one that proves the guarantee still holds on actual detection frames by comparing real output pixels (not just asserting a count) between a run with detection enabled vs. disabled.
+
+### Also still open
+
+- **Rotation handling is only verified with synthetic, mocked `ffprobe` values and a physically-transposed (not metadata-tagged) test clip.** The real iPhone clip used for this investigation happened to have no rotation metadata at all (genuinely portrait-native), so it did not exercise this path either. **A real rotation-tagged clip still needs manual verification** — this remains completely unverified against real metadata-rotated footage.
+- **Video-clip tracking evaluation is "pending annotations."** `eval/video_gt/README.md` documents the CVAT annotation process, but no real annotations exist yet (§6). Until they exist, there is no measured track-level or frame-level leak rate for video, only the image-based WIDER FACE numbers in §3.
 
 None of this was hidden or glossed over — it's written here so you don't have to rediscover it.
 
@@ -146,7 +218,7 @@ python eval/prepare_wider_face.py       # downloads ~365MB WIDER FACE validation
 python -m pytest tests/
 ```
 
-Should show 76 passed as of the last commit here. If something fails, that's more informative than anything in this document — trust the tests over this file if they ever disagree.
+Should show 89 passed as of the last commit here. If something fails, that's more informative than anything in this document — trust the tests over this file if they ever disagree.
 
 ### Re-run the baseline on your own machine
 
@@ -163,11 +235,12 @@ python eval/run_baseline.py
 ### Then: finish Phase 1, then continue through PHASES.md
 
 Phase 1 is not done (§4). At minimum, before calling it complete:
-1. Confirm (or fix further) the plate ghost-box issue against a real clip, not just the synthetic simulation.
-2. Investigate and fix the "blocky patches over people" and "Original panel not loading" issues.
-3. Get real rotation-metadata test coverage, or explicitly accept the manual-verification-only gap and move on with it documented.
-4. Consider implementing frame-skipping (`PHASES.md` Phase 1 item 3) — not strictly required by the "done when" bar, but real-clip iteration is currently very slow without it.
-5. Once you're confident, re-run `eval/run_baseline.py` on the video clips (§6 — needs annotations first) and add the "with tracking" row PHASES.md Phase 0 already scoped.
+1. **The Haar face false-positive flooding (§4.2)** — this is the biggest remaining item. It needs Phase 2's detector comparison, not a Phase 1 patch; treat this real clip's ~20 boxes/frame for 2 people as a concrete test case any replacement detector must clear.
+2. **The plate detector's oversized raw false-positives on architecture (§4.1)** — same story, same phase, same detector-quality root cause.
+3. **Get real rotation-metadata test coverage** — the iPhone clip used for round-2 testing happened to have none (genuinely portrait-native), so this is still completely unverified against real metadata-rotated footage. Either find/film a clip that actually has the metadata, or explicitly accept the manual-verification-only gap and move on with it documented.
+4. Once you're confident, re-run `eval/run_baseline.py` on the video clips (§6 — needs annotations first) and add the "with tracking" row `PHASES.md` Phase 0 already scoped.
+
+Already done, from a second investigation pass: the plate ghost-box accumulation fix is confirmed on real footage (§4.1), the "Original panel" bug is fixed and tested (§4.3), and per-stage profiling plus a working `detection_stride` fast mode are in place (§4.4).
 
 After that, `PHASES.md` Phases 2–7 continue in order: **Phase 2** (detector comparison + a trained plate detector, which is the real fix for the contour-detector noise in §4), **Phase 3** (click-to-select UI), **Phase 4** (Creator/Journalist profiles, metadata stripping), **Phase 5** (Docker, CI, README/LICENSE polish), **Phase 6** (hosted demo), **Phase 7** (stretch features). Each phase's prompt is written out in full in `PHASES.md` — they're meant to be pasted to Claude Code as-is, one at a time.
 
