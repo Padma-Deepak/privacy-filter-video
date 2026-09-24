@@ -9,7 +9,8 @@ import base64
 import uuid
 
 from flask import Flask, render_template, request, abort
-from detector import process_image, process_video
+from detector import process_image
+from core.video import process_video_streaming
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
@@ -42,6 +43,11 @@ def _env_flag(name: str, default: bool = False) -> bool:
 DEBUG = _env_flag("FLASK_DEBUG", False)
 HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 PORT = int(os.environ.get("FLASK_PORT", "5000"))
+
+# Unlimited by default (PHASES.md Phase 1) — set for the hosted demo (Phase 6)
+# to bound processing time/output size, e.g. MAX_CLIP_SECONDS=15.
+_max_clip_seconds_raw = os.environ.get("MAX_CLIP_SECONDS", "").strip()
+MAX_CLIP_SECONDS = float(_max_clip_seconds_raw) if _max_clip_seconds_raw else None
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -86,7 +92,9 @@ def process():
     output_path = None
     try:
         if is_video:
-            result = process_video(upload_path, OUTPUTS_DIR, MODELS_DIR)
+            result = process_video_streaming(
+                upload_path, OUTPUTS_DIR, MODELS_DIR, max_clip_seconds=MAX_CLIP_SECONDS,
+            )
         else:
             result = process_image(upload_path, OUTPUTS_DIR, MODELS_DIR)
         output_path = result["output_path"]
