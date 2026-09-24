@@ -70,7 +70,7 @@ Size buckets are by the longer side of the ground-truth box: small <32px, medium
 - FPS above is **single-detector throughput** (one function, single-threaded, no I/O) on the hardware below — not the full three-detector parallel `process_frame()` pipeline end to end, and not comparable to a future video FPS number once tracking/streaming (Phase 1) changes the pipeline shape.
 - The DNN model's weights have an undocumented upstream licence — see `project/README.md`'s DNN section before treating it as more than a local evaluation candidate.
 
-**Hardware:** Apple M5 (arm64), macOS 26.6.2, CPU only — no GPU used by any of these detectors. Python 3.12.5, opencv-python 4.14.0.94, ultralytics 8.4.161.
+**Hardware:** Apple M5, confirmed native arm64 (`platform.machine()` reports `arm64`, not `x86_64` under Rosetta) in the `.venv` interpreter, macOS 26.6.2, CPU only — no GPU used by any of these detectors. Python 3.12.5, opencv-python 4.14.0.94, ultralytics 8.4.161.
 
 Reproduce with:
 ```bash
