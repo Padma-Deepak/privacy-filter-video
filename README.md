@@ -52,6 +52,35 @@ Original files are never modified — every filter is applied to an in-memory co
 
 ![Crowd face blurring with a false-positive plate example](docs/results/street_before_after.jpg)
 
+## Baseline (Phase 0)
+
+Before changing any detector, the current pipeline was measured against a fixed, seeded 300-image subset of the [WIDER FACE](http://shuoyang1213.me/WIDERFACE/) validation set (seed 42; 3,022 ground-truth face boxes), using `eval/prepare_wider_face.py` and `eval/run_baseline.py`. IoU threshold 0.5, per `CLAUDE.md`'s metric definitions. Full numbers: [`eval/results/baseline.csv`](eval/results/baseline.csv).
+
+| Detector | Precision | Recall | Recall (small) | Recall (medium) | Recall (large) | FPS |
+|---|--:|--:|--:|--:|--:|--:|
+| Face — Haar cascade (current default) | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 2.07 |
+| Face — DNN (SSD) | — | — | — | — | — | — |
+| Face — Haar+DNN (production `detect_faces`) | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 2.07 |
+
+Size buckets are by the longer side of the ground-truth box: small <32px, medium 32–96px, large >96px.
+
+- **DNN row is blank because `project/models/*.caffemodel` isn't present in this environment** — the app already handles this gracefully (falls back to Haar-only, see `project/README.md`'s optional download step), so the production row above is currently identical to the Haar-only row, not a stronger combined result.
+- **Recall on small faces (6.5%) is the standout weak point** — the Haar cascade is missing roughly 19 out of 20 small faces in this subset. This is the number Phase 2's detector comparison needs to beat, not "faster" or "looks better."
+- **Plates and screens have no ground truth in WIDER FACE** (it's a face-only dataset), so only raw detection counts and FPS are reported, honestly, rather than a fabricated precision/recall: the current Haar+contour plate detector found 310 boxes across the 300 images at 4.90 FPS, and YOLOv8n found 8 screen-class boxes at 12.70 FPS. A labelled plate/screen set is Phase 2's job (`PHASES.md`).
+- FPS above is **single-detector throughput** (one function, single-threaded, no I/O) on the hardware below — not the full three-detector parallel `process_frame()` pipeline end to end, and not comparable to a future video FPS number once tracking/streaming (Phase 1) changes the pipeline shape.
+
+**Hardware:** Apple M5 (arm64), macOS 26.6.2, CPU only — no GPU used by any of these detectors. Python 3.12.5, opencv-python 4.14.0.94, ultralytics 8.4.161.
+
+Reproduce with:
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r project/requirements.txt -r eval/requirements.txt
+python eval/prepare_wider_face.py   # downloads WIDER FACE val (~365MB, cached after first run)
+python eval/run_baseline.py         # writes eval/results/baseline.csv
+```
+
+Known issues and fragile spots found while building this baseline (Flask debug mode exposed on `0.0.0.0`, non-H.264 video output, zero box padding before redaction, and more) are documented with file:line references in [`docs/AUDIT.md`](docs/AUDIT.md) — nothing was fixed yet, this phase only measures and records.
+
 ## Quick start
 
 ```bash
