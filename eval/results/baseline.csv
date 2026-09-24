@@ -1,6 +1,6 @@
 detector,n_images,n_gt_boxes,n_pred_boxes,tp,fp,fn,precision,recall,recall_small,recall_medium,recall_large,fps,notes
-faces_haar,300,3022,1615,760,855,2262,0.47058823529411764,0.2514890800794176,0.06545454545454546,0.44166666666666665,0.5993150684931506,2.0733975588427427,
-faces_dnn,300,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,skipped: deploy.prototxt / res10_300x300_ssd_iter_140000.caffemodel not found in project/models/
-faces_haar_dnn_production,300,3022,1615,760,855,2262,0.47058823529411764,0.2514890800794176,0.06545454545454546,0.44166666666666665,0.5993150684931506,2.0733975588427427,"DNN unavailable at run time, so production detect_faces() == faces_haar (not re-run)"
-plates_haar_contour_production,300,nan,310,nan,nan,nan,nan,nan,nan,nan,nan,4.897862279330256,"no plate ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"
-screens_yolov8n_production,300,nan,8,nan,nan,nan,nan,nan,nan,nan,nan,12.697512384331782,"no screen ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"
+faces_haar,300,3022,1615,760,855,2262,0.47058823529411764,0.2514890800794176,0.06545454545454546,0.44166666666666665,0.5993150684931506,2.3148342978590724,
+faces_dnn,300,3022,364,357,7,2665,0.9807692307692307,0.11813368630046327,0.0,0.13055555555555556,0.7397260273972602,32.94457605077362,
+faces_haar_dnn_production,300,3022,1649,821,828,2201,0.49787750151607035,0.27167438782263403,0.06545454545454546,0.4601851851851852,0.7397260273972602,2.181856251908106,
+plates_haar_contour_production,300,nan,310,nan,nan,nan,nan,nan,nan,nan,nan,5.259063502413023,"no plate ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"
+screens_yolov8n_production,300,nan,8,nan,nan,nan,nan,nan,nan,nan,nan,21.15073058362931,"no screen ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"

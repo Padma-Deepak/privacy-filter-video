@@ -58,16 +58,17 @@ Before changing any detector, the current pipeline was measured against a fixed,
 
 | Detector | Precision | Recall | Recall (small) | Recall (medium) | Recall (large) | FPS |
 |---|--:|--:|--:|--:|--:|--:|
-| Face — Haar cascade (current default) | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 2.07 |
-| Face — DNN (SSD) | — | — | — | — | — | — |
-| Face — Haar+DNN (production `detect_faces`) | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 2.07 |
+| Face — Haar cascade (current default) | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 2.31 |
+| Face — DNN (SSD) | 98.1% | 11.8% | 0.0% | 13.1% | 74.0% | 32.94 |
+| Face — Haar+DNN (production `detect_faces`) | 49.8% | 27.2% | 6.5% | 46.0% | 74.0% | 2.18 |
 
 Size buckets are by the longer side of the ground-truth box: small <32px, medium 32–96px, large >96px.
 
-- **DNN row is blank because `project/models/*.caffemodel` isn't present in this environment** — the app already handles this gracefully (falls back to Haar-only, see `project/README.md`'s optional download step), so the production row above is currently identical to the Haar-only row, not a stronger combined result.
-- **Recall on small faces (6.5%) is the standout weak point** — the Haar cascade is missing roughly 19 out of 20 small faces in this subset. This is the number Phase 2's detector comparison needs to beat, not "faster" or "looks better."
-- **Plates and screens have no ground truth in WIDER FACE** (it's a face-only dataset), so only raw detection counts and FPS are reported, honestly, rather than a fabricated precision/recall: the current Haar+contour plate detector found 310 boxes across the 300 images at 4.90 FPS, and YOLOv8n found 8 screen-class boxes at 12.70 FPS. A labelled plate/screen set is Phase 2's job (`PHASES.md`).
+- **DNN alone is high-precision, low-recall** — 98.1% of its detections are correct, but it finds barely 1 in 10 ground-truth faces overall and **zero small faces** in this subset; it only earns its keep on large faces (74.0%). Haar catches more overall but with far more false positives (47.1% precision).
+- **Combined (production) beats both on recall and precision simultaneously** — merging Haar+DNN with NMS lifts recall from 25.1% (Haar alone) to 27.2%, and precision from 47.1% to 49.8%, with large-face recall jumping to 74.0%. Small-face recall is unchanged at 6.5% — DNN contributes nothing there, so this remains the weak point Phase 2's detector comparison needs to beat, not "faster" or "looks better."
+- **Plates and screens have no ground truth in WIDER FACE** (it's a face-only dataset), so only raw detection counts and FPS are reported, honestly, rather than a fabricated precision/recall: the current Haar+contour plate detector found 310 boxes across the 300 images at 5.26 FPS, and YOLOv8n found 8 screen-class boxes at 21.15 FPS. A labelled plate/screen set is Phase 2's job (`PHASES.md`).
 - FPS above is **single-detector throughput** (one function, single-threaded, no I/O) on the hardware below — not the full three-detector parallel `process_frame()` pipeline end to end, and not comparable to a future video FPS number once tracking/streaming (Phase 1) changes the pipeline shape.
+- The DNN model's weights have an undocumented upstream licence — see `project/README.md`'s DNN section before treating it as more than a local evaluation candidate.
 
 **Hardware:** Apple M5 (arm64), macOS 26.6.2, CPU only — no GPU used by any of these detectors. Python 3.12.5, opencv-python 4.14.0.94, ultralytics 8.4.161.
 

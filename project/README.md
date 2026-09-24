@@ -26,19 +26,21 @@ This installs: `flask`, `opencv-python`, `numpy`, `ultralytics` (YOLOv8).
 
 ## Optional: DNN Face Model (Improves Face Detection Accuracy)
 
-Download these two files and place them in the `models/` folder:
+```bash
+python ../scripts/download_models.py
+```
 
-1. **`res10_300x300_ssd_iter_140000.caffemodel`**
-   https://github.com/opencv/opencv_3rdparty/raw/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel
-
-2. **`deploy.prototxt`**
-   https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt
+This fetches both files into `models/`, verifying each against a pinned SHA-256 checksum:
 
 ```
 project/models/
-├── res10_300x300_ssd_iter_140000.caffemodel
+├── res10_300x300_ssd_iter_140000.caffemodel   (~10.2MB)
 └── deploy.prototxt
 ```
+
+**Licence — checked, not assumed:** `deploy.prototxt` lives in the main `opencv/opencv` repo (Apache License 2.0). The trained weights, `res10_300x300_ssd_iter_140000.caffemodel`, live in `opencv/opencv_3rdparty`, which **has no LICENSE file at all** — confirmed via the GitHub API, and independently flagged by the OpenCV community as an unresolved licensing gap for this exact model ([OpenCV Q&A #212903](https://answers.opencv.org/question/212903/license-for-trained-dnn-face-detector-models/)). Training-data provenance is likewise undocumented upstream. This model is used here only as one candidate for local, non-commercial evaluation (`eval/run_baseline.py`); per `CLAUDE.md`, Phase 2 picks the shipped default from measured recall/FPS across several detectors, not by reputation — if this one is still in the running as an actual default rather than just a comparison point, its licence gap should be resolved first (e.g. swap for OpenCV's own YuNet, which ships under the same Apache-2.0 licence with clear provenance).
+
+Because of the >10MB size and the licence gap above, these weights are **not committed** — `scripts/download_models.py` fetches them on demand and `project/models/` is git-ignored except for `.gitkeep`.
 
 > The Haar Cascade XML files (`haarcascade_frontalface_default.xml`, `haarcascade_russian_plate_number.xml`) do **not** need to be downloaded — they are bundled with `opencv-python`.
 
