@@ -6,11 +6,21 @@ Supports both still images and short video clips.
 
 import os
 import base64
+import subprocess
 import uuid
 
 from flask import Flask, render_template, request, abort
 from detector import process_image
 from core.video import process_video_streaming
+
+# Containers/MIME types browsers reliably play inline via a <video> tag —
+# notably NOT video/quicktime (.mov), which is the actual cause of the
+# "Original panel doesn't load" bug found on a real iPhone upload: Chrome
+# does not reliably play video/quicktime inline, especially via a data: URI.
+# .mov/.avi/.mkv uploads get remuxed (not re-encoded — fast, lossless) to a
+# clean single-video+audio MP4 for the PREVIEW only; the actual uploaded
+# file and the processing pipeline are untouched.
+WEB_PLAYABLE_VIDEO_EXTENSIONS = {"mp4", "webm"}
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
@@ -69,6 +79,34 @@ def _to_data_url(path, ext):
     return f"data:{mime};base64,{b64}"
 
 
+def _preview_data_url(path, ext, is_video):
+    """
+    Build the data: URL used for the browser preview only.
+
+    For video containers browsers don't reliably play inline (.mov/.avi/.mkv),
+    remux to a temporary clean MP4 first — a stream copy (-c copy), so it's
+    fast and lossless, not a re-encode. Falls back to the raw file if the
+    remux fails for any reason, so a preview quirk never turns into a 500.
+    """
+    if not is_video or ext in WEB_PLAYABLE_VIDEO_EXTENSIONS:
+        return _to_data_url(path, ext)
+
+    remuxed_path = f"{path}_preview.mp4"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a:0?",
+             "-c", "copy", "-movflags", "+faststart", "-loglevel", "error", remuxed_path],
+            check=True, timeout=60,
+        )
+        return _to_data_url(remuxed_path, "mp4")
+    except Exception:
+        app.logger.warning("Preview remux failed for %s, falling back to raw file", path, exc_info=True)
+        return _to_data_url(path, ext)
+    finally:
+        if os.path.exists(remuxed_path):
+            os.remove(remuxed_path)
+
+
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
@@ -101,7 +139,7 @@ def process():
         out_ext = "mp4" if is_video else ext  # process_video always emits mp4
 
         # Encode both files for embedding — then delete temp files
-        original_data  = _to_data_url(upload_path, ext)
+        original_data  = _preview_data_url(upload_path, ext, is_video)
         processed_data = _to_data_url(output_path, out_ext)
     except Exception:
         app.logger.exception("Processing failed for upload %s", upload_path)
