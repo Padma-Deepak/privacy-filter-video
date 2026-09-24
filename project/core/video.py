@@ -67,6 +67,22 @@ _FILTER_FOR_CLASS = {
     "screens": detector.apply_pixelation,
 }
 
+# Per-class gap-fill buffer (frames a track keeps being redacted after its
+# last real detection). Faces get a real buffer because Haar/DNN detections
+# are (mostly) genuine objects worth bridging through brief occlusion or a
+# missed frame. Plates default much shorter: the contour detector is known
+# noisy (docs/AUDIT.md — false positives on rectangular architecture like
+# doorframes and ceiling lines). A 30-frame buffer turns every one-off false
+# trigger into ~1 second of extra redacted area, and on a busy background
+# several can fire in quick succession and accumulate into many simultaneous
+# "ghost" boxes that visually merge into one large blocked-out region — this
+# is exactly what happened on a real test clip: no single detection was
+# oversized, but 13+ overlapping gap-fill boxes were alive at once. Screens
+# (a real trained YOLO detector, but not measured on video yet) get a
+# moderate middle value. The real fix for plates is Phase 2's trained
+# detector replacing the contour heuristic; this is a Stage 3 mitigation.
+DEFAULT_TRACK_BUFFER_BY_CLASS = {"faces": 30, "plates": 5, "screens": 15}
+
 
 @dataclass
 class VideoProbe:
@@ -255,7 +271,7 @@ def process_video_streaming(
     models_dir: str,
     max_clip_seconds: "float | None" = None,
     detection_max_width: int = DETECTION_MAX_WIDTH_DEFAULT,
-    track_buffer: int = 30,
+    track_buffer_by_class: "dict | None" = None,
     smoothing_alpha: float = 0.5,
     pad_pct: float = 0.15,
 ) -> dict:
@@ -269,6 +285,11 @@ def process_video_streaming(
     ("remove the 12-second cap ... behind an environment variable
     MAX_CLIP_SECONDS, default unlimited"). project/app.py reads that env var
     and passes it through.
+
+    track_buffer_by_class: overrides DEFAULT_TRACK_BUFFER_BY_CLASS (faces=30,
+    plates=5, screens=15) per class; pass e.g. {"plates": 0} to disable
+    plate gap-fill entirely. See that constant's comment for why plates
+    default much shorter than faces.
 
     Temp files (the silent pre-mux intermediate always, and the final output
     too if anything fails before returning) are cleaned up on every exit
@@ -303,9 +324,10 @@ def process_video_streaming(
         if not writer.isOpened():
             raise ValueError("Could not open video writer for output.")
 
+        buffers = {**DEFAULT_TRACK_BUFFER_BY_CLASS, **(track_buffer_by_class or {})}
         trackers = {
             cls: ClassTracker(
-                track_buffer=track_buffer, smoothing_alpha=smoothing_alpha,
+                track_buffer=buffers[cls], smoothing_alpha=smoothing_alpha,
                 pad_pct=pad_pct, frame_rate=max(1, round(probe.nominal_fps)),
             )
             for cls in ("faces", "plates", "screens")

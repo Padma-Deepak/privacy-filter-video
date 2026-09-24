@@ -133,3 +133,15 @@ def test_check_ffmpeg_available_raises_clear_error_when_missing(monkeypatch):
 
 def test_check_ffmpeg_available_passes_when_present():
     video.check_ffmpeg_available()  # should not raise on this machine
+
+
+# ── per-class gap-fill buffer defaults ───────────────────────────────────────
+
+def test_plates_default_to_a_much_shorter_gap_fill_buffer_than_faces():
+    # Regression guard: plates defaulting to the same long buffer as faces is
+    # exactly what let a noisy contour-detector false positive stay redacted
+    # for ~1s, and several accumulate into a large blocked-out region on a
+    # real phone video — see tests/test_tracking.py's accumulation tests.
+    buffers = video.DEFAULT_TRACK_BUFFER_BY_CLASS
+    assert buffers["plates"] < buffers["faces"]
+    assert buffers["plates"] <= 5

@@ -337,6 +337,46 @@ def test_two_trackers_do_not_share_state_when_run_interleaved():
     assert tracker_a._bytetrack.tracked_tracks is not tracker_b._bytetrack.tracked_tracks
 
 
+# ── Regression: gap-fill must not let noisy false positives accumulate ──────
+#
+# Found on a real phone video: the contour plate detector (already known
+# noisy — docs/AUDIT.md) threw frequent, spatially-random false positives on
+# indoor architecture. With a 30-frame gap-fill buffer, each one-off false
+# trigger stayed "alive" and redacted for ~1s; on a busy background several
+# fired in quick succession and accumulated into 13+ simultaneous ghost boxes
+# that visually merged into one large blocked-out region. No single box was
+# ever oversized — this is a volume/accumulation bug, not a sizing bug.
+
+def test_long_buffer_lets_noisy_detections_accumulate_many_simultaneous_boxes():
+    import random
+    rng = random.Random(1)
+    tracker = ClassTracker(track_buffer=30, smoothing_alpha=0.5, pad_pct=0.15)
+    max_simultaneous = 0
+    for _ in range(60):
+        boxes = []
+        if rng.random() < 0.5:
+            boxes.append((rng.randint(0, 900), rng.randint(0, 200), rng.randint(40, 120), rng.randint(15, 40)))
+        results = tracker.update(boxes, 1080, 1920)
+        max_simultaneous = max(max_simultaneous, len(results))
+    # Documents the bug as observed — a long buffer really does let this many
+    # unrelated one-off detections pile up at once.
+    assert max_simultaneous >= 10
+
+
+def test_short_buffer_keeps_noisy_detection_accumulation_bounded():
+    import random
+    rng = random.Random(1)  # same seed/sequence as the long-buffer case above
+    tracker = ClassTracker(track_buffer=5, smoothing_alpha=0.5, pad_pct=0.15)
+    max_simultaneous = 0
+    for _ in range(60):
+        boxes = []
+        if rng.random() < 0.5:
+            boxes.append((rng.randint(0, 900), rng.randint(0, 200), rng.randint(40, 120), rng.randint(15, 40)))
+        results = tracker.update(boxes, 1080, 1920)
+        max_simultaneous = max(max_simultaneous, len(results))
+    assert max_simultaneous <= 8
+
+
 # ── Helper function unit tests ───────────────────────────────────────────────
 
 def test_union_box_known_values():
