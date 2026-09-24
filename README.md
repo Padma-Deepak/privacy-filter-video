@@ -1,5 +1,7 @@
 # Privacy Filter (Video)
 
+> **Status: work in progress.** Phases 0 and 1 (audit, baseline, video streaming/tracking pipeline) are mostly done; Phase 2 onward (better detectors, click-to-select, profiles, packaging, hosted demo) is pending. See [`docs/HANDOFF.md`](docs/HANDOFF.md) for exactly what's done, what's measured, and what's still open, and [`docs/NEXT_PROMPTS.md`](docs/NEXT_PROMPTS.md) for ready-to-paste next steps.
+
 A locally-run Python web app that finds sensitive visual information in **images and short videos** and anonymizes it automatically — no cloud APIs, no accounts, nothing ever leaves your machine.
 
 It doesn't treat every detection the same way. It picks a filter based on *what* it found:

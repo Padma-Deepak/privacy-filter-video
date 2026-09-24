@@ -2,6 +2,8 @@
 
 This document is self-contained. You should be able to pick up the project from here without having seen the session that produced it. Start with `CLAUDE.md` (project rules) and `PHASES.md` (roadmap) — this file is a snapshot of where things stand against that plan, not a replacement for either.
 
+**Ready-to-paste prompts for the next session are in [`docs/NEXT_PROMPTS.md`](NEXT_PROMPTS.md)** — start there once you've read this document.
+
 ---
 
 ## 1. Goal and users
@@ -79,7 +81,8 @@ d79d649 Make detector load failures loud, fix YOLO weights CWD dependency
 - `project/core/tracking.py`: `ClassTracker` — one instance per object class per job, wraps `ByteTrack` for best-effort IDs, but **our own continuity matching is authoritative**, not ByteTrack's (see §2). Per-job ID renumbering (1, 2, 3... in order of first appearance) on top of ByteTrack's process-wide internal counter.
 - `project/core/video.py`: streams frames one at a time (never the whole clip in memory), detects on a downscaled copy but redacts at full resolution, handles rotation via `ffprobe` + `cv2.rotate()` (not OpenCV's auto-orientation — see §4), normalizes variable-frame-rate sources to constant-rate at the *measured* average fps, mux­es real H.264 + original audio via `ffmpeg`, and cleans up temp files on every exit path (success, error, or interrupt).
 - `scripts/debug_tracking.py`: visualizes raw detections (green) / tracker estimate (yellow) / final redaction region (red) with track IDs labelled — very useful for debugging anything tracking-related. Run it on any clip; output goes to `scripts/debug_output/` (git-ignored).
-- A real bug found via real-clip testing and partially fixed: see §4.
+- `detection_stride` fast mode (env var `DETECTION_STRIDE`) and a fix for the "Original" browser preview not loading for `.mov`/`.avi`/`.mkv` uploads.
+- Two real bugs found via real-clip testing, one fixed and confirmed, one root-caused and deliberately left open with reasoning: see §4 for the full, honest breakdown — read it before assuming Phase 1 is done.
 
 Commits (oldest → newest):
 ```
@@ -98,7 +101,7 @@ a6a7aad Add process_video_streaming(): the main video pipeline
 28674c8 Fix Original preview not loading for .mov/.avi/.mkv uploads
 ```
 
-23 commits total, all local to the `upgrade` branch (see §7 — none of this has been pushed anywhere yet). 89 tests pass as of the last commit (`python -m pytest tests/`).
+26 commits total, all on the `upgrade` branch (see §7 for how this reaches you). 89 tests pass as of the last commit (`python -m pytest tests/`).
 
 ### Investigation round 2 — real footage from an actual iPhone, findings below
 
