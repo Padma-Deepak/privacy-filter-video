@@ -1,0 +1,6 @@
+detector,n_images,n_gt_boxes,n_pred_boxes,tp,fp,fn,precision,recall,recall_small,recall_medium,recall_large,fps,notes
+faces_haar,300,3022,1615,760,855,2262,0.47058823529411764,0.2514890800794176,0.06545454545454546,0.44166666666666665,0.5993150684931506,2.0733975588427427,
+faces_dnn,300,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan,skipped: deploy.prototxt / res10_300x300_ssd_iter_140000.caffemodel not found in project/models/
+faces_haar_dnn_production,300,3022,1615,760,855,2262,0.47058823529411764,0.2514890800794176,0.06545454545454546,0.44166666666666665,0.5993150684931506,2.0733975588427427,"DNN unavailable at run time, so production detect_faces() == faces_haar (not re-run)"
+plates_haar_contour_production,300,nan,310,nan,nan,nan,nan,nan,nan,nan,nan,4.897862279330256,"no plate ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"
+screens_yolov8n_production,300,nan,8,nan,nan,nan,nan,nan,nan,nan,nan,12.697512384331782,"no screen ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"

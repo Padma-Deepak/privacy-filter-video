@@ -1,0 +1,4 @@
+# Additional dependencies for eval/ scripts, on top of project/requirements.txt
+# (which already provides opencv-python and numpy, used by run_baseline.py).
+certifi>=2024.0.0
+pytest>=8,<9
