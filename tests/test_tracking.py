@@ -62,6 +62,121 @@ def test_every_raw_box_appears_every_frame_regardless_of_count():
     assert {r.raw_box for r in detected} == set(boxes)
 
 
+# ── ID stability: a continuously-visible face keeps ONE id (review round 2) ─
+#
+# Our own velocity-aware continuity match against last-known position is
+# authoritative for id assignment; ByteTrack's suggestion only seeds a
+# brand-new id when nothing in our own history matches. This is what
+# guarantees stability even when ByteTrack's own internal continuity (a much
+# stricter matching threshold, 0.8 by default vs our 0.3) would have lost
+# the track and silently started a new internal id for it — see the module
+# docstring.
+
+def test_continuously_visible_face_keeps_one_stable_id_across_a_clip():
+    tracker = ClassTracker(smoothing_alpha=0.4)
+    ids = []
+    x = 100
+    for _ in range(60):
+        results = tracker.update([(x, 200, 40, 40)], FRAME_W, FRAME_H)
+        ids.append(_by_source(results, "detected")[0].track_id)
+        x += 5  # steady, moderate motion across the whole clip
+    assert len(set(ids)) == 1
+
+
+def test_id_stays_stable_even_when_bytetrack_loses_internal_continuity(monkeypatch):
+    """
+    Directly forces the scenario the id-stability bug came from: ByteTrack
+    fails to link a frame's detection to its own internal track (simulated
+    here by making update_with_detections return nothing, standing in for
+    ByteTrack's stricter 0.8 matching threshold losing continuity under
+    motion, or its confidence floor dropping the detection). Our own
+    continuity match must still recognize the box as the same face — via its
+    last-known position — and keep the same external id regardless.
+    """
+    tracker = ClassTracker(smoothing_alpha=0.4)
+    real_update = tracker._bytetrack.update_with_detections
+
+    r1 = tracker.update([(100, 100, 40, 40)], FRAME_W, FRAME_H)
+    id_before = _by_source(r1, "detected")[0].track_id
+
+    import supervision as sv
+    monkeypatch.setattr(tracker._bytetrack, "update_with_detections", lambda dets: sv.Detections.empty())
+    r2 = tracker.update([(108, 100, 40, 40)], FRAME_W, FRAME_H)  # ByteTrack "loses" this frame
+    id_during = _by_source(r2, "detected")[0].track_id
+
+    monkeypatch.setattr(tracker._bytetrack, "update_with_detections", real_update)
+    r3 = tracker.update([(116, 100, 40, 40)], FRAME_W, FRAME_H)  # ByteTrack "recovers"
+    id_after = _by_source(r3, "detected")[0].track_id
+
+    assert id_before == id_during == id_after
+
+
+def test_id_stays_stable_when_bytetrack_hands_back_a_conflicting_new_id(monkeypatch):
+    """
+    The precise failure mode this design exists to prevent: ByteTrack
+    doesn't just go silent — it can also internally decide a still-visible,
+    spatially-continuous box is a NEW track and hand back a different, but
+    otherwise perfectly valid-looking, tracker_id for it (its own frame-to-
+    frame matching threshold is 0.8, stricter than ours). If our code ever
+    trusted that suggestion over our own continuity match, this would fail.
+    """
+    import numpy as np
+    import supervision as sv
+
+    tracker = ClassTracker(smoothing_alpha=0.4)
+    r1 = tracker.update([(100, 100, 40, 40)], FRAME_W, FRAME_H)
+    id_before = _by_source(r1, "detected")[0].track_id
+
+    def conflicting_suggestion(_dets):
+        # A box at the same continuous position, but claiming a brand-new,
+        # never-before-seen ByteTrack id — exactly what internal continuity
+        # loss inside ByteTrack would look like from the outside.
+        return sv.Detections(
+            xyxy=np.array([[108.0, 100.0, 148.0, 140.0]], dtype=np.float32),
+            confidence=np.array([1.0], dtype=np.float32),
+            class_id=np.array([0]),
+            tracker_id=np.array([999999]),
+        )
+
+    monkeypatch.setattr(tracker._bytetrack, "update_with_detections", conflicting_suggestion)
+    r2 = tracker.update([(108, 100, 40, 40)], FRAME_W, FRAME_H)
+    id_during = _by_source(r2, "detected")[0].track_id
+
+    assert id_during == id_before, "our own continuity match must win over ByteTrack's conflicting suggestion"
+
+
+# ── Per-job id renumbering ───────────────────────────────────────────────────
+
+def test_track_ids_are_renumbered_1_2_3_in_order_of_first_appearance():
+    tracker = ClassTracker()
+    r1 = tracker.update([(0, 0, 10, 10)], FRAME_W, FRAME_H)
+    assert _by_source(r1, "detected")[0].track_id == 1
+
+    r2 = tracker.update([(0, 0, 10, 10), (500, 500, 10, 10)], FRAME_W, FRAME_H)
+    ids_by_pos = {r.raw_box: r.track_id for r in _by_source(r2, "detected")}
+    assert ids_by_pos[(0, 0, 10, 10)] == 1     # same face as before -> same external id
+    assert ids_by_pos[(500, 500, 10, 10)] == 2  # newly appeared -> next external id
+
+    r3 = tracker.update([(0, 0, 10, 10), (500, 500, 10, 10), (900, 900, 10, 10)], FRAME_W, FRAME_H)
+    ids_by_pos3 = {r.raw_box: r.track_id for r in _by_source(r3, "detected")}
+    assert ids_by_pos3[(900, 900, 10, 10)] == 3
+
+
+def test_external_ids_start_at_1_for_every_fresh_job_regardless_of_process_history():
+    # Run one tracker through several tracks first, to advance both
+    # supervision.ByteTrack's process-wide internal counter and this
+    # tracker's own external counter.
+    warm_up = ClassTracker()
+    for i in range(5):
+        warm_up.update([(i * 100, i * 100, 10, 10)], FRAME_W, FRAME_H)
+
+    # A brand new job's tracker must still start its own external ids at 1,
+    # no matter what the shared internal ByteTrack counter is doing.
+    fresh = ClassTracker()
+    result = fresh.update([(0, 0, 10, 10)], FRAME_W, FRAME_H)
+    assert _by_source(result, "detected")[0].track_id == 1
+
+
 # ── Condition 2: smoothing must never shrink/lag below the raw box ──────────
 
 def test_raw_box_always_fully_covered_for_fast_moving_object():
@@ -83,22 +198,19 @@ def test_raw_box_always_fully_covered_for_fast_moving_object():
 def test_smoothing_still_reduces_jitter_around_a_stable_box():
     # Same box every frame except small per-frame noise — smoothed box should
     # converge tightly around it (not just always equal the noisy raw box).
-    # supervision.ByteTrack draws its track_id from a process-wide counter
-    # (confirmed: STrack._external_count is a class attribute), so it won't
-    # necessarily be 1 here depending on test execution order — capture
-    # whichever id this tracker's first call actually gets.
+    # Only one object is tracked in this test, so there's exactly one entry
+    # in _history at any time — read it directly rather than by id (ids are
+    # internal-bookkeeping keys, not what TrackedBox.track_id returns; see
+    # the external-id renumbering test below for that distinction).
     import random
     rng = random.Random(0)
     tracker = ClassTracker(smoothing_alpha=0.3, pad_pct=0.0)
     widths = []
-    track_id = None
     for _ in range(20):
         noise = rng.randint(-5, 5)
         raw = (100, 100, 50 + noise, 50 + noise)
-        results = tracker.update([raw], FRAME_W, FRAME_H)
-        if track_id is None:
-            track_id = _by_source(results, "detected")[0].track_id
-        widths.append(tracker._history[track_id]["smoothed"][2])
+        tracker.update([raw], FRAME_W, FRAME_H)
+        widths.append(list(tracker._history.values())[0]["smoothed"][2])
     # Smoothed width should vary less than the raw noise range (±5 around 50).
     assert max(widths) - min(widths) < 10 - 1e-9
 
