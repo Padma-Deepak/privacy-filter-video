@@ -59,6 +59,22 @@ PORT = int(os.environ.get("FLASK_PORT", "5000"))
 _max_clip_seconds_raw = os.environ.get("MAX_CLIP_SECONDS", "").strip()
 MAX_CLIP_SECONDS = float(_max_clip_seconds_raw) if _max_clip_seconds_raw else None
 
+# Fast mode: detect every Kth frame, propagate via the tracker in between.
+# Default 1 = every frame (unchanged behaviour). See
+# core.video.process_video_streaming's docstring for the exact trade-off:
+# a NEW face/plate/screen appearing on a skipped frame isn't redacted until
+# the next detection frame, up to (K-1) frames of exposure.
+_detection_stride_raw = os.environ.get("DETECTION_STRIDE", "1").strip()
+DETECTION_STRIDE = max(1, int(_detection_stride_raw)) if _detection_stride_raw else 1
+
+# Stopgap ahead of Phase 4's real Creator/Journalist profile system: until
+# profiles exist as a first-class concept, PRIVACY_PROFILE=journalist forces
+# full per-frame detection, because Journalist mode must never trade recall
+# for speed (CLAUDE.md non-negotiable #2 — a missed detection is a failure).
+PRIVACY_PROFILE = os.environ.get("PRIVACY_PROFILE", "").strip().lower()
+if PRIVACY_PROFILE == "journalist":
+    DETECTION_STRIDE = 1
+
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB upload cap
@@ -131,7 +147,8 @@ def process():
     try:
         if is_video:
             result = process_video_streaming(
-                upload_path, OUTPUTS_DIR, MODELS_DIR, max_clip_seconds=MAX_CLIP_SECONDS,
+                upload_path, OUTPUTS_DIR, MODELS_DIR,
+                max_clip_seconds=MAX_CLIP_SECONDS, detection_stride=DETECTION_STRIDE,
             )
         else:
             result = process_image(upload_path, OUTPUTS_DIR, MODELS_DIR)

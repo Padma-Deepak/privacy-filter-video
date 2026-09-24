@@ -274,6 +274,7 @@ def process_video_streaming(
     track_buffer_by_class: "dict | None" = None,
     smoothing_alpha: float = 0.5,
     pad_pct: float = 0.15,
+    detection_stride: int = 1,
 ) -> dict:
     """
     Stream a video frame-by-frame (never the whole clip in memory), detect on
@@ -290,6 +291,23 @@ def process_video_streaming(
     plates=5, screens=15) per class; pass e.g. {"plates": 0} to disable
     plate gap-fill entirely. See that constant's comment for why plates
     default much shorter than faces.
+
+    detection_stride: run the detectors every Kth frame (default 1 = every
+    frame); frames in between get zero raw detections fed to the trackers,
+    which — since redaction is never gated by the tracker — means anything
+    ALREADY tracked keeps being redacted via gap-fill on the skipped frames
+    (each such box's `source` is naturally "gap_fill", satisfying the "mark
+    gap-filled frames" requirement with no separate flag needed), but a
+    face/plate/screen that FIRST appears on a skipped frame will not be
+    redacted until the next detection frame runs — up to (detection_stride
+    - 1) frames of exposure for a brand-new object. This is a real,
+    deliberate trade-off, not a bug: it does NOT weaken the "every raw
+    detection is redacted the frame it's found" guarantee (still exactly
+    true on every frame detection actually runs), it only widens how often
+    that check happens. See README.md and docs/HANDOFF.md for the same
+    warning in user-facing docs. project/app.py forces this to 1 whenever
+    PRIVACY_PROFILE=journalist is set (a stopgap ahead of Phase 4's real
+    profile system — Journalist mode must never trade recall for speed).
 
     Temp files (the silent pre-mux intermediate always, and the final output
     too if anything fails before returning) are cleaned up on every exit
@@ -335,10 +353,12 @@ def process_video_streaming(
 
         scale = detection_scale_factor(out_w, detection_max_width)
         max_frames = int(max_clip_seconds * probe.nominal_fps) if max_clip_seconds else None
+        stride = max(1, int(detection_stride))
 
         totals = {"faces": 0, "plates": 0, "screens": 0}
         frame_idx = 0
         truncated = False
+        empty_detections = {"faces": [], "plates": [], "screens": []}
 
         with ThreadPoolExecutor(max_workers=3) as pool:
             while True:
@@ -351,7 +371,14 @@ def process_video_streaming(
 
                 frame = apply_rotation(frame, probe.rotation_degrees)
 
-                if scale != 1.0:
+                if frame_idx % stride != 0:
+                    # Skipped detection frame: feed no raw boxes. Existing
+                    # tracks keep being redacted via gap-fill (their
+                    # TrackedBox.source is "gap_fill" — no separate flag
+                    # needed); a track that would have FIRST appeared this
+                    # frame is not redacted until the next detection frame.
+                    detections = empty_detections
+                elif scale != 1.0:
                     small = cv2.resize(
                         frame, (max(1, int(out_w * scale)), max(1, int(out_h * scale))),
                         interpolation=cv2.INTER_AREA,

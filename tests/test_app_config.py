@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "project"))
 
 
 def _reload_app(monkeypatch, **env):
-    for key in ("FLASK_DEBUG", "FLASK_HOST", "FLASK_PORT"):
+    for key in ("FLASK_DEBUG", "FLASK_HOST", "FLASK_PORT", "DETECTION_STRIDE", "PRIVACY_PROFILE"):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
@@ -42,6 +42,28 @@ def test_debug_and_host_are_env_overridable(monkeypatch):
     assert app_module.DEBUG is True
     assert app_module.HOST == "0.0.0.0"
     assert app_module.PORT == 8080
+
+
+def test_detection_stride_defaults_to_one(monkeypatch):
+    app_module = _reload_app(monkeypatch)
+    assert app_module.DETECTION_STRIDE == 1
+
+
+def test_detection_stride_is_env_overridable(monkeypatch):
+    app_module = _reload_app(monkeypatch, DETECTION_STRIDE="3")
+    assert app_module.DETECTION_STRIDE == 3
+
+
+def test_journalist_profile_forces_detection_stride_to_one(monkeypatch):
+    # Stopgap ahead of Phase 4's real profile system: Journalist mode must
+    # never trade recall for speed, so it overrides any DETECTION_STRIDE.
+    app_module = _reload_app(monkeypatch, DETECTION_STRIDE="5", PRIVACY_PROFILE="journalist")
+    assert app_module.DETECTION_STRIDE == 1
+
+
+def test_creator_profile_does_not_override_detection_stride(monkeypatch):
+    app_module = _reload_app(monkeypatch, DETECTION_STRIDE="4", PRIVACY_PROFILE="creator")
+    assert app_module.DETECTION_STRIDE == 4
 
 
 def test_process_500_does_not_leak_exception_text(monkeypatch):

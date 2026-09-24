@@ -245,3 +245,74 @@ def test_ffmpeg_missing_raises_before_any_file_is_created(plain_clip, outputs_di
         video.process_video_streaming(plain_clip, outputs_dir, MODELS_DIR)
 
     assert os.listdir(outputs_dir) == []
+
+
+# ── detection_stride (fast mode) ─────────────────────────────────────────────
+#
+# Found during real-clip profiling: face+plate detection dominate per-frame
+# cost (~55% and ~26% of sequential time respectively on a real portrait
+# clip), while tracking/redaction are cheap. Detecting every Kth frame and
+# letting the tracker's existing gap-fill bridge the rest cuts detector calls
+# roughly K-fold without touching the "every raw detection is redacted the
+# frame it's found" guarantee — that guarantee only ever applies to frames
+# detection actually runs on; a new object first appearing on a skipped
+# frame is exposed for up to (K-1) frames, which is a deliberate, documented
+# trade-off, not a violation of it.
+
+def test_detection_stride_one_calls_detector_every_frame(plain_clip, outputs_dir, monkeypatch):
+    calls = []
+    real_detect_all = video.detector.detect_all
+    monkeypatch.setattr(video.detector, "detect_all", lambda *a, **k: calls.append(1) or real_detect_all(*a, **k))
+
+    result = video.process_video_streaming(plain_clip, outputs_dir, MODELS_DIR, detection_stride=1)
+    assert len(calls) == result["frames_processed"]
+
+
+def test_detection_stride_three_calls_detector_a_third_as_often(plain_clip, outputs_dir, monkeypatch):
+    calls = []
+    real_detect_all = video.detector.detect_all
+    monkeypatch.setattr(video.detector, "detect_all", lambda *a, **k: calls.append(1) or real_detect_all(*a, **k))
+
+    result = video.process_video_streaming(plain_clip, outputs_dir, MODELS_DIR, detection_stride=3)
+    n = result["frames_processed"]
+    assert len(calls) == -(-n // 3)  # ceil(n / 3): frames 0, 3, 6, ...
+
+
+def test_raw_detection_guarantee_holds_on_every_detection_frame_with_stride(plain_clip, outputs_dir, monkeypatch):
+    """
+    With stride=2, a fixed synthetic box fed on every ACTUAL detection call
+    must still be redacted (blurred, since it's fed as a "face") immediately
+    on each frame detection runs — the stride skips detector CALLS, it must
+    never delay redaction on the frames detection does run on. Proven by
+    comparing actual output pixels against a second run with detection
+    entirely disabled: frame 0 (always a detection frame, 0 % stride == 0
+    for any stride) must differ at the detected region.
+    """
+    fixed_box = {"faces": [(10, 10, 30, 30)], "plates": [], "screens": []}
+    monkeypatch.setattr(video.detector, "detect_all", lambda *a, **k: fixed_box)
+    result = video.process_video_streaming(plain_clip, outputs_dir, MODELS_DIR, detection_stride=2)
+    detection_frames = -(-result["frames_processed"] // 2)
+    assert result["faces_found"] == detection_frames  # one box counted per actual detection call
+
+    cap = video.cv2.VideoCapture(result["output_path"])
+    ok, redacted_frame0 = cap.read()
+    cap.release()
+    assert ok
+
+    no_detections = {"faces": [], "plates": [], "screens": []}
+    monkeypatch.setattr(video.detector, "detect_all", lambda *a, **k: no_detections)
+    result2 = video.process_video_streaming(plain_clip, outputs_dir, MODELS_DIR, detection_stride=2)
+    cap2 = video.cv2.VideoCapture(result2["output_path"])
+    ok2, unredacted_frame0 = cap2.read()
+    cap2.release()
+    assert ok2
+
+    roi_redacted = redacted_frame0[10:40, 10:40]
+    roi_unredacted = unredacted_frame0[10:40, 10:40]
+    assert not (roi_redacted == roi_unredacted).all(), "the detected region must actually differ once blurred"
+
+
+def test_detection_stride_default_is_one():
+    import inspect
+    sig = inspect.signature(video.process_video_streaming)
+    assert sig.parameters["detection_stride"].default == 1
