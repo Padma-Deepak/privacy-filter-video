@@ -23,6 +23,10 @@
       <div class="alert alert--warn">No sensitive regions detected — {{ 'video' if media_type == 'video' else 'image' }} returned unchanged.</div>
       {% endif %}
 
+      {% for warning in warnings %}
+      <div class="alert alert--warn">⚠️ {{ warning }}</div>
+      {% endfor %}
+
       {% if media_type == 'video' %}
       <div class="alert alert--info">
         🎬 {{ frames }} frame{{ 's' if frames != 1 else '' }} processed{% if truncated %} — clip was trimmed to ~12s for this demo{% endif %}. Output has no audio track.

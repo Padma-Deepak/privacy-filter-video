@@ -115,6 +115,7 @@ def process():
         media_type="video" if is_video else "image",
         frames=result.get("frames_processed"),
         truncated=result.get("truncated", False),
+        warnings=result.get("warnings", []),
     )
 
 

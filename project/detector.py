@@ -18,11 +18,14 @@ Entry points:
     audio track).
 """
 
+import logging
 import os
 import uuid
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # YOLO class IDs (COCO) we treat as "screens / devices"
@@ -32,6 +35,13 @@ SCREEN_CLASSES = {
     63: "laptop",
     67: "cell phone",
 }
+
+# Resolved relative to this file, not the process's working directory — the
+# app is documented to run as `cd project && python app.py`, but anything
+# else (a test runner, a future Docker WORKDIR, running eval/ scripts from
+# the repo root) previously made this look for yolov8n.pt in the wrong place
+# and silently re-download a duplicate copy.
+_YOLO_WEIGHTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yolov8n.pt")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Module-level singletons  — loaded ONCE at import time, reused forever
@@ -48,39 +58,76 @@ _haar_plate_clf  = (
     if os.path.isfile(_haar_plate_path) else None
 )
 
-# DNN SSD face net  — populated lazily so missing model files don't crash startup
+# DNN SSD face net and the YOLO screen model are both tri-state:
+#   None  -> not attempted yet
+#   False -> attempted and unavailable
+#   value -> loaded successfully
+# "Unavailable" covers two different situations that get different treatment:
+# the DNN model files simply not being present is an expected, silently
+# skipped fallback (documented in project/README.md as optional); but if the
+# files ARE present and loading still raises, or if YOLO's load raises for
+# any reason, that's a real failure — it's logged as an error and recorded
+# so callers can surface a visible warning instead of quietly degrading.
 _dnn_net = None
+_dnn_warning = None
 
 def _get_dnn(models_dir: str):
-    """Load the Caffe SSD face net once; return None if files are absent."""
-    global _dnn_net
+    """Load the Caffe SSD face net once; return None if unavailable."""
+    global _dnn_net, _dnn_warning
     if _dnn_net is not None:
-        return _dnn_net
+        return _dnn_net if _dnn_net is not False else None
     proto = os.path.join(models_dir, "deploy.prototxt")
     model = os.path.join(models_dir, "res10_300x300_ssd_iter_140000.caffemodel")
     if not os.path.isfile(proto) or not os.path.isfile(model):
+        _dnn_net = False
         return None
     try:
         _dnn_net = cv2.dnn.readNetFromCaffe(proto, model)
-    except Exception:
-        _dnn_net = None
-    return _dnn_net
+        return _dnn_net
+    except Exception as exc:
+        logger.error("DNN face model failed to load from %s: %s", models_dir, exc)
+        _dnn_warning = f"DNN face detector failed to load ({exc}); continuing with Haar cascade only."
+        _dnn_net = False
+        return None
 
 # YOLO
 _yolo_model = None
+_yolo_warning = None
 
 def _get_yolo():
-    global _yolo_model
-    if _yolo_model is None:
-        try:
-            from ultralytics import YOLO
-            _yolo_model = YOLO("yolov8n.pt")
-        except Exception:
-            _yolo_model = None
-    return _yolo_model
+    """
+    Load the YOLOv8 screen model once; return None if unavailable.
+
+    Unlike the DNN face net, there's no "expected absence" state here — the
+    weights are either committed at project/yolov8n.pt or auto-downloaded by
+    ultralytics on first use, so any exception is treated as a real failure.
+    """
+    global _yolo_model, _yolo_warning
+    if _yolo_model is not None:
+        return _yolo_model if _yolo_model is not False else None
+    try:
+        from ultralytics import YOLO
+        _yolo_model = YOLO(_YOLO_WEIGHTS_PATH)
+        return _yolo_model
+    except Exception as exc:
+        logger.error("YOLO screen detector failed to load: %s", exc)
+        _yolo_warning = f"Screen detector failed to load ({exc}); screens will not be detected."
+        _yolo_model = False
+        return None
 
 # Eagerly warm up YOLO at import time
 _get_yolo()
+
+
+def get_detector_warnings() -> list:
+    """
+    Warnings for detectors that failed to load.
+
+    Does NOT include the DNN face model simply being unconfigured (no model
+    files downloaded) — that's an expected, silent fallback. Only genuine
+    load failures end up here.
+    """
+    return [w for w in (_dnn_warning, _yolo_warning) if w]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -321,6 +368,7 @@ def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
         faces_found   : int
         plates_found  : int
         screens_found : int
+        warnings      : list[str] (detectors that failed to load, if any)
     """
     image = cv2.imread(input_path)
     if image is None:
@@ -338,6 +386,7 @@ def process_image(input_path: str, outputs_dir: str, models_dir: str) -> dict:
         "faces_found":   counts["faces"],
         "plates_found":  counts["plates"],
         "screens_found": counts["screens"],
+        "warnings":      get_detector_warnings(),
     }
 
 
@@ -371,6 +420,7 @@ def process_video(
         screens_found    : int
         frames_processed : int
         truncated        : bool
+        warnings         : list[str] (detectors that failed to load, if any)
     """
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -425,4 +475,5 @@ def process_video(
         "screens_found":    totals["screens"],
         "frames_processed": frame_idx,
         "truncated":        frame_idx >= max_frames and (total_available == 0 or frame_idx < total_available),
+        "warnings":         get_detector_warnings(),
     }
