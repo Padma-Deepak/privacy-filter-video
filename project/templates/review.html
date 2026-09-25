@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>Privacy Filter — review and redact</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}">
+  <script defer src="{{ url_for('static', filename='review.js') }}"></script>
+</head>
+<body>
+<header><a class="brand" href="/review"><span class="mark">◈</span> Privacy Filter</a><span class="local"><i></i> Runs on your computer</span></header>
+<main>
+  <section id="upload-panel" class="intro">
+    <div class="eyebrow">KEEP THE STORY. PROTECT THE PEOPLE.</div>
+    <h1>You choose<br>who stays visible.</h1>
+    <p class="lead">Draw a box around each face you want to keep visible. We follow those face tracks through the clip and hide the other detected faces.</p>
+    <form id="upload-form" class="upload-card">
+      <label class="drop" for="file"><span class="upload-icon">↑</span><strong id="file-name">Choose a video or image</strong><span>MP4, MOV, AVI, MKV, WEBM · JPG, PNG, BMP, WEBP · up to 200 MB</span>
+        <input id="file" name="file" type="file" accept=".mp4,.mov,.avi,.mkv,.webm,.jpg,.jpeg,.png,.bmp,.webp" required>
+      </label>
+      <input type="hidden" name="faces_only" value="true"><fieldset class="profiles"><legend>Start with a privacy profile</legend>
+        <label class="profile"><input type="radio" name="profile" value="creator" checked><span><strong>Creator</strong><small>Blur other faces. Keep your audio.</small></span></label>
+        <label class="profile"><input type="radio" name="profile" value="journalist"><span><strong>Journalist</strong><small>Solid face masks. Audio muted.</small></span></label>
+      </fieldset>
+      <details><summary>Use a custom YAML profile</summary><p>Paste a complete profile based on the bundled creator.yaml schema. Metadata removal is always enabled.</p><textarea id="custom-profile" aria-label="Custom YAML profile" rows="8" placeholder="Leave empty to use the selected preset"></textarea></details>
+      <button class="primary" id="analyse-button" type="submit">Open video and choose people <span>→</span></button>
+      <p class="fine">Both presets use the current detectors. Neither guarantees every person is found. Metadata is removed on export; a report is included.</p>
+    </form>
+    <div class="privacy"><strong>Local processing. Your footage stays here.</strong><p>Uploads are temporarily stored on this computer while you review. Originals are deleted after export, cancellation or 30 minutes of review inactivity. Interrupted jobs are cleaned up on the next app run.</p></div>
+    <a class="secondary-link" href="/legacy">Open the original one-step filter</a>
+  </section>
+
+  <section id="progress-panel" hidden class="progress-panel">
+    <div class="eyebrow">YOUR FOOTAGE STAYS LOCAL</div><h1 id="progress-title">Finding the details.</h1>
+    <p id="progress-text" role="status" aria-live="polite">Queued for analysis…</p>
+    <progress id="progress" value="0" max="1"></progress>
+    <button id="cancel" class="secondary">Cancel and delete upload</button>
+  </section>
+
+  <section id="review-panel" hidden>
+    <div class="review-heading"><div><div class="eyebrow">02 / CHOOSE WHO STAYS VISIBLE</div><h1>Draw around the faces to keep.</h1></div><button id="discard" class="secondary">Delete this job</button></div>
+    <p class="notice">Pause the video and draw a tight box around one face. Repeat for anyone else you want visible. All other detected faces stay hidden.</p>
+    <p id="warnings" class="warning" hidden></p>
+    <div class="workspace">
+      <div class="viewer-column">
+        <div class="viewer" id="viewer"><video id="video" playsinline preload="metadata" hidden></video><canvas id="canvas" width="960" height="540" aria-label="Frame preview. Select tracks using the list, or click a box here."></canvas></div>
+        <div class="timeline"><button id="previous" aria-label="Previous frame">←</button><button id="play">Play</button><input id="seek" type="range" min="0" max="0" value="0" aria-label="Review frame"><button id="next" aria-label="Next frame">→</button><output id="frame-label">Frame 0</output></div>
+        <p class="fine">Select a face to see the other detected faces blurred immediately. Use View original to add someone else. If a track ends, select the person again later.</p>
+        <div class="manual"><div><strong>Who should stay visible?</strong><p>Draw directly on a paused face. One box per person.</p></div><button id="draw" class="primary">+ Keep a person visible</button></div><p id="selection-status" role="status" aria-live="polite"></p>
+        <details class="advanced"><summary>Add a manual hide region</summary><p class="fine">Fixed rectangle, applied only over the chosen frames. It does not follow movement.</p><button id="draw-hide" class="secondary">Draw a hide region</button><div id="manual-list"></div></details>
+      </div>
+      <aside>
+        <div class="track-heading"><h2>People to keep visible <span id="track-count"></span></h2><p>Only people you select appear here.</p></div><div id="people" class="tracks"></div><p class="fine">Selections follow face tracks, not verified identities. Check crossings and re-entry before sharing.</p><details class="advanced"><summary>Advanced track controls</summary>
+        <div class="bulk"><button id="hide-all">Hide all</button><button id="keep-all">Keep all</button><button id="invert">Invert</button></div>
+        <p class="fine">Hide range keeps the track visible outside that range. Invert switches hide ↔ keep; ranges become hide.</p>
+        <label class="fine"><input id="show-boxes" type="checkbox"> Show all detection boxes</label><div id="tracks" class="tracks"></div></details>
+      </aside>
+    </div>
+    <div class="export-bar"><div><label for="audio">Export audio</label><select id="audio"><option value="keep">Keep audio</option><option value="mute">Mute audio</option></select><p id="audio-note" class="fine">Voices can identify people even when their faces are hidden.</p></div><div><label class="confirm"><input id="reviewed" type="checkbox"> I reviewed the choices and understand detections can be missed.</label><button id="export" class="primary">Export redacted file →</button></div></div>
+  </section>
+
+  <section id="result-panel" hidden class="result-panel"><div class="eyebrow">03 / READY TO SAVE</div><h1>Your export is ready.</h1><p>The original upload and preview crops have been deleted. Download your redacted file and report before this job expires.</p><div class="result-actions"><a id="download" class="primary">Download redacted file ↓</a><a id="report-json" class="secondary">Download JSON report</a><a id="report-html" class="secondary" target="_blank" rel="noopener">View report</a></div><p class="notice">Inspect the exported file before sharing. The report records choices, not a guarantee of anonymity.</p><button id="new-job" class="secondary">Delete job and start again</button></section>
+  <p id="error" class="error" role="alert" hidden></p>
+</main>
+<footer><span>Privacy Filter / local review workspace</span><span>No cloud processing. No face recognition.</span></footer>
+</body></html>

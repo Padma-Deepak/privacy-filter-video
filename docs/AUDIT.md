@@ -1,5 +1,11 @@
 # Phase 0 Audit — Privacy Filter (Video)
 
+> Historical document: this is a point-in-time audit of the original coursework
+> implementation before streaming, tracking, selective review, profiles, YuNet,
+> metadata removal and security hardening were added. Line references and present-
+> tense statements below describe that original revision. Use the root README and
+> `docs/HANDOFF.md` for the current implementation.
+
 Date: 2026-09-24
 Scope: `project/app.py`, `project/detector.py`, `project/requirements.txt`, `project/README.md`, `instructions.txt`, plus `project/templates/*.html` (read for the security review since app.py renders user-influenced data into them).
 No behaviour was changed while writing this document.

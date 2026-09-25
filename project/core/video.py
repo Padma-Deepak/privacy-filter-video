@@ -305,17 +305,16 @@ def process_video_streaming(
     detection is redacted the frame it's found" guarantee (still exactly
     true on every frame detection actually runs), it only widens how often
     that check happens. See README.md and docs/HANDOFF.md for the same
-    warning in user-facing docs. project/app.py forces this to 1 whenever
-    PRIVACY_PROFILE=journalist is set (a stopgap ahead of Phase 4's real
-    profile system — Journalist mode must never trade recall for speed).
+    warning in user-facing docs. The legacy route's project/app.py forces this
+    to 1 whenever PRIVACY_PROFILE=journalist is set. The selective review path
+    has first-class YAML profiles and does not use detection stride.
 
     Temp files (the silent pre-mux intermediate always, and the final output
     too if anything fails before returning) are cleaned up on every exit
     path — success, error, or an interrupt (e.g. Ctrl-C / KeyboardInterrupt)
     mid-loop, since try/finally runs regardless of how the frame reads exit.
-    There is no separate "cancel" code path yet — that needs the background
-    job system planned for Phase 3; this makes the current synchronous path
-    exception-safe for any interruption.
+    This function is used by the synchronous legacy route. The selective review
+    path has cooperative cancellation in core/jobs.py and core/review.py.
 
     Returns dict: output_path, faces_found, plates_found, screens_found,
     frames_processed, truncated, warnings.

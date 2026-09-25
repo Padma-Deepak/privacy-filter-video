@@ -21,11 +21,25 @@ Entry points:
 import logging
 import os
 import uuid
+import threading
+from functools import wraps
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
+
+# Offline inference is mandatory; missing weights produce a visible warning.
+os.environ["YOLO_OFFLINE"] = "true"
+_inference_lock = threading.RLock()
+
+
+def synchronized(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _inference_lock:
+            return function(*args, **kwargs)
+    return wrapped
 
 # ──────────────────────────────────────────────────────────────────────────────
 # YOLO class IDs (COCO) we treat as "screens / devices"
@@ -106,6 +120,8 @@ def _get_yolo():
     if _yolo_model is not None:
         return _yolo_model if _yolo_model is not False else None
     try:
+        if not os.path.isfile(_YOLO_WEIGHTS_PATH):
+            raise FileNotFoundError("Local YOLO weights are missing; install them before processing offline")
         from ultralytics import YOLO
         _yolo_model = YOLO(_YOLO_WEIGHTS_PATH)
         return _yolo_model
@@ -301,6 +317,7 @@ def apply_black_mask(image, x, y, w, h):
 # Single-frame pipeline — shared by both the image and video entry points
 # ──────────────────────────────────────────────────────────────────────────────
 
+@synchronized
 def detect_all(image, models_dir: str, executor: ThreadPoolExecutor = None) -> dict:
     """
     Run all three detectors on a single BGR frame and return their raw boxes,

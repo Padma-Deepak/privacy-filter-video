@@ -1,111 +1,85 @@
-# Context-Aware Privacy Filtering System
+# Privacy Filter application
 
-A locally-run Python web application that automatically detects and anonymizes sensitive visual information in uploaded **images and short videos** using **context-appropriate filtering techniques**:
+This directory contains the Flask application. The default `/review` workflow
+is a local face-only anonymizer with YuNet detection, motion tracking,
+click-to-keep selection, full-resolution export, audio handling and a redaction
+report. The original coursework interface remains available at `/legacy`.
 
-| Detected Region | Filter Applied |
-|---|---|
-| Human faces | Gaussian blur |
-| License plates | Black mask (solid block) |
-| Screens, phones, laptops | Pixelation / mosaic |
+## Install and run
 
-Detection uses OpenCV Haar Cascades, DNN SSD, and YOLOv8. No image or video data is ever sent to an external server — the entire pipeline runs on your machine.
-
----
-
-## Installation
+From the repository root:
 
 ```bash
-pip install -r requirements.txt
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r project/requirements.txt -r eval/requirements.txt
+python scripts/download_yunet.py
+python project/app.py
 ```
 
-This installs: `flask`, `opencv-python`, `numpy`, `ultralytics` (YOLOv8).
+Open `http://127.0.0.1:5000/review`.
 
-> **YOLOv8 model:** `yolov8n.pt` (~6 MB) is downloaded automatically from Ultralytics on the first run. An internet connection is required for that first run only.
+FFmpeg with `libx264` must be installed for video review and export. YuNet
+weights are fetched into `project/models/`, verified by checksum and ignored by
+Git. Processing does not require a network connection after setup.
 
----
+## Current pipeline
 
-## Optional: DNN Face Model (Improves Face Detection Accuracy)
+1. `review_api.py` validates the upload and creates a session-owned job.
+2. `core/jobs.py` runs analysis and export in a bounded single-worker queue.
+3. `core/review.py` streams frames and calls `core/faces.py` for YuNet detection.
+4. `core/tracking.py` assigns stable per-job IDs and adds smoothing/gap filling.
+5. The browser lets the user choose face tracks to keep visible.
+6. Unselected tracks are hidden by default; manual hide regions take priority.
+7. Export reuses reviewed geometry on original-resolution frames and invokes
+   FFmpeg for H.264, AAC audio handling and metadata removal.
+8. The source upload and in-memory preview crops are deleted after completion.
 
-```bash
-python ../scripts/download_models.py
-```
+## Profiles
 
-This fetches both files into `models/`, verifying each against a pinned SHA-256 checksum:
+`profiles/creator.yaml` and `profiles/journalist.yaml` are validated by
+`core/profiles.py`. Both currently process faces only and use YuNet at confidence
+0.8. Creator uses blur and keeps audio. Journalist uses a solid mask, larger
+padding and muted audio. Both strip metadata and produce reports.
 
-```
-project/models/
-├── res10_300x300_ssd_iter_140000.caffemodel   (~10.2MB)
-└── deploy.prototxt
-```
+## Directory structure
 
-**Licence — checked, not assumed:** `deploy.prototxt` lives in the main `opencv/opencv` repo (Apache License 2.0). The trained weights, `res10_300x300_ssd_iter_140000.caffemodel`, live in `opencv/opencv_3rdparty`, which **has no LICENSE file at all** — confirmed via the GitHub API, and independently flagged by the OpenCV community as an unresolved licensing gap for this exact model ([OpenCV Q&A #212903](https://answers.opencv.org/question/212903/license-for-trained-dnn-face-detector-models/)). Training-data provenance is likewise undocumented upstream. This model is used here only as one candidate for local, non-commercial evaluation (`eval/run_baseline.py`); per `CLAUDE.md`, Phase 2 picks the shipped default from measured recall/FPS across several detectors, not by reputation — if this one is still in the running as an actual default rather than just a comparison point, its licence gap should be resolved first (e.g. swap for OpenCV's own YuNet, which ships under the same Apache-2.0 licence with clear provenance).
-
-Because of the >10MB size and the licence gap above, these weights are **not committed** — `scripts/download_models.py` fetches them on demand and `project/models/` is git-ignored except for `.gitkeep`.
-
-> The Haar Cascade XML files (`haarcascade_frontalface_default.xml`, `haarcascade_russian_plate_number.xml`) do **not** need to be downloaded — they are bundled with `opencv-python`.
-
----
-
-## Running the App
-
-```bash
-python app.py
-```
-
-Open: `http://127.0.0.1:5000`
-
-Upload a JPEG, PNG, BMP, or WEBP **image**, or an MP4, MOV, AVI, MKV, or WEBM **video**. The system will:
-1. Detect faces → apply Gaussian blur
-2. Detect license plates → apply black mask
-3. Detect screens / phones / laptops → apply pixelation
-
-For video, every frame runs through the same detect → filter pipeline used for images, and the result is re-encoded as an MP4.
-
-The processed file is shown side-by-side with the original and can be downloaded from the results page. Both the upload and output are deleted from disk immediately after the response is sent.
-
-### Video notes
-
-- Clips are capped at **~12 seconds** of processing (later frames are dropped) to keep processing time and page size reasonable for a demo app — this is configurable via `max_duration_sec` in `detector.process_video()`.
-- Frames wider than 960px are downscaled before detection for speed.
-- Output video has **no audio track** — OpenCV's `VideoCapture`/`VideoWriter` are video-only.
-
----
-
-## Project Structure
-
-```
+```text
 project/
-├── app.py             ← Flask web server
-├── detector.py        ← Detection + context-aware filter pipeline
-├── requirements.txt
-├── README.md
-├── templates/
-│   └── index.html
+├── app.py
+├── review_api.py
+├── detector.py              legacy detectors and filters
+├── core/
+│   ├── faces.py             YuNet adapter
+│   ├── jobs.py              job lifecycle and cleanup
+│   ├── profiles.py          profile validation and redaction
+│   ├── review.py            analysis and export
+│   ├── selection.py         keep/hide matching and validation
+│   ├── tracking.py          motion tracking
+│   └── video.py             video probe/rotation utilities
+├── profiles/
 ├── static/
-│   └── style.css
-├── uploads/           ← Temp (auto-cleared)
-├── outputs/           ← Temp (auto-cleared)
-└── models/            ← Place optional DNN model files here
+├── templates/
+├── jobs/                    private temporary job data, ignored
+└── models/                  downloaded weights, ignored
 ```
 
----
+## Legacy route
 
-## Team
+`/legacy` retains the original automatic face/plate/screen pipeline for
+comparison. Its optional SSD face weights can be downloaded with
+`python scripts/download_models.py`, but the upstream trained weights have no
+licence file and must not be bundled. Haar and contour plate detection remain
+noisy. The legacy path is not the behavior described by the main product UI.
 
-- Rithvik Kumar R K — 1BM23CS269  
-- Padma Deepak — 1BM23CS222  
-- Sarthaka Mitra GB — 1BM23CS305  
-- Hrishikesh R Prasad — 1BM23CS367  
+## Limits
 
-**Course:** Computer Vision | **Instructor:** Dr. A. Sarkunavathi
+- Detector misses and false positives are possible; review the entire export.
+- Tracking is motion-based and can split or switch identities.
+- The browser preview approximates the export filter.
+- Only the first audio stream is kept.
+- Variable frame timing is normalized to an average frame rate.
+- Voices and contextual identifiers are not anonymized by face filtering.
 
----
-
-## Known Limitations
-
-- Haar Cascade misses faces turned > 45° from frontal or heavily occluded
-- YOLOv8 screen detection requires reasonable object size and clarity
-- License plate detection optimized for rectangular formats; non-standard layouts may be missed
-- False positives possible on geometric patterns resembling license plates
-- Video processing is capped at ~12 seconds and drops audio (see [Video notes](#video-notes))
-- Detection runs independently per video frame — there is no temporal tracking, so a detection can flicker on/off between adjacent frames
+Measured detector results, test counts, licences and the full architecture are
+maintained in the repository root `README.md`.

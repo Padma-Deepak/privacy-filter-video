@@ -1,6 +1,27 @@
-# PHASES.md — build plan for Claude Code
+# PHASES.md — roadmap and current status
 
-Work through these in order. Give Claude Code **one phase prompt at a time**, review the result, commit, then move on. Each prompt below is written to be pasted as-is. Make sure `CLAUDE.md` is in the repo root first.
+The prompts below preserve the original implementation plan. They are historical
+instructions, not descriptions of the current code. Use this status table and the
+root README to determine what remains.
+
+| Phase | Current status |
+|---|---|
+| 0 — audit/evaluation | Complete: original audit, seeded WIDER subset and baseline results |
+| 1 — video foundation | Implemented: streaming, tracking, full-resolution redaction, H.264, audio and rotation handling; broader real-phone validation remains |
+| 2 — detectors | Partial: YuNet evaluated and selected for face-only review; multi-model comparison, plate training and video leak-rate evaluation remain |
+| 3 — click-to-select | Implemented for faces: draw-to-keep, fail-closed choices, live preview, manual hide regions and export |
+| 4 — profiles/reporting | Implemented for the current face-only scope: Creator/Journalist YAML, metadata stripping and JSON/HTML reports |
+| 5 — packaging/polish | Partial: tests and README are current; Docker, CI, LICENSE, security document and demo assets remain |
+| 6 — hosted demo | Not started |
+| 7 — stretch features | Not started |
+
+Current validation: 103 Python tests and 4 JavaScript preview tests. Current
+face-review default: YuNet 2023mar at confidence 0.8. Video ground-truth
+annotations and frame/track leak-rate measurements are still missing.
+
+For remaining work, update a phase prompt to account for the status above before
+using it. Do not rerun completed phases as if the repository were still at its
+coursework starting point.
 
 Why the order matters: tracking (Phase 1) is required by click-to-select (Phase 3), and the evaluation harness (Phase 0) is what lets you prove every later improvement.
 

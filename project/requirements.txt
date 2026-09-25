@@ -3,3 +3,4 @@ opencv-python>=4.9,<5
 numpy>=1.26,<3
 ultralytics>=8.2,<9
 supervision>=0.24,<0.25
+PyYAML==6.0.3

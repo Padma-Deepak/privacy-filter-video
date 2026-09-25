@@ -1,0 +1,14 @@
+name: Journalist
+classes: [faces]
+filters: {faces: solid, plates: solid, screens: solid}
+padding: 0.25
+blur_kernel: 151
+blur_sigma: 50
+pixel_size: 25
+track_buffers: {faces: 30, plates: 5, screens: 15}
+audio: mute
+strip_metadata: true
+report: true
+detector: yunet
+face_confidence: 0.8
+screen_confidence: 0.25

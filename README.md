@@ -1,129 +1,218 @@
-# Privacy Filter (Video)
+# Privacy Filter
 
-> **Status: work in progress.** Phases 0 and 1 (audit, baseline, video streaming/tracking pipeline) are mostly done; Phase 2 onward (better detectors, click-to-select, profiles, packaging, hosted demo) is pending. See [`docs/HANDOFF.md`](docs/HANDOFF.md) for exactly what's done, what's measured, and what's still open, and [`docs/NEXT_PROMPTS.md`](docs/NEXT_PROMPTS.md) for ready-to-paste next steps.
+A local-first image and video anonymizer. Upload footage, select the people who
+may remain visible, and export a face-redacted H.264 video with audio kept or
+muted. Processing stays on the machine running the app.
 
-A locally-run Python web app that finds sensitive visual information in **images and short videos** and anonymizes it automatically — no cloud APIs, no accounts, nothing ever leaves your machine.
+The project is designed as a computer-vision portfolio project: detector claims
+are backed by reproducible evaluation scripts, privacy-sensitive choices fail
+closed, and known limitations are documented.
 
-It doesn't treat every detection the same way. It picks a filter based on *what* it found:
-
-| Detected | Filter | Why |
-|---|---|---|
-| Human faces | Gaussian blur | Softens identity while keeping the photo looking natural, not like a redaction |
-| License plates | Solid black mask | Plate text just needs to be unreadable — no need to preserve visual continuity |
-| Screens / phones / laptops | Pixelation | Shows *there's a device* without leaking whatever's on the screen |
-
-## How it works
-
-Three independent detectors run **in parallel** (one `ThreadPoolExecutor`, three workers) on every frame:
+## Current workflow
 
 ```mermaid
 flowchart LR
-    A[Input frame] --> B[Haar Cascade + DNN SSD<br/>face detector]
-    A --> C[Haar Cascade + Canny/contour<br/>plate detector]
-    A --> D[YOLOv8<br/>tv / laptop / phone]
-    B --> E[Non-max suppression]
-    C --> E
-    D --> F[Apply filters to frame copy]
-    E --> F
-    F --> G[Gaussian blur → faces]
-    F --> H[Black mask → plates]
-    F --> I[Pixelation → screens]
+    A[Upload image or video] --> B[Decode frames]
+    B --> C[YuNet face detection]
+    C --> D[Motion and IoU tracking]
+    D --> E[User selects faces to keep]
+    E --> F[Redact every other detected track]
+    F --> G[H.264 export]
+    A --> H[Source audio]
+    H --> G
+    G --> I[Metadata-stripped file and report]
 ```
 
-- **Faces** are found two ways — a fast Haar Cascade and, if you drop the model files into `project/models/`, a more accurate DNN (SSD) detector — and the results are merged and deduplicated with non-max suppression.
-- **Plates** likewise combine a Haar Cascade trained on plate shapes with classic contour detection (Canny edges → `findContours` → filter by aspect ratio), since neither alone catches everything.
-- **Screens** use YOLOv8 (`yolov8n.pt`), filtered down to the `tv`/`laptop`/`cell phone` COCO classes.
+The selective-review pipeline:
 
-All three run against the same frame at once, so total detection time is roughly the slowest single detector, not the sum of all three.
+- detects faces with OpenCV YuNet at the profile confidence threshold;
+- assigns persistent, per-job track IDs;
+- lets the user draw around one or more people to keep visible;
+- hides every unselected detected face by default;
+- supports manual hide regions for missed or difficult cases;
+- applies redaction to the original-resolution frames;
+- exports H.264 MP4 with the first audio stream kept or muted;
+- strips source metadata and chapters; and
+- produces a JSON or HTML redaction report without original pixels.
 
-**Video** reuses the exact same per-frame pipeline (`process_frame()` in `detector.py`) — it just loops it over every frame of the clip with one shared thread pool, then re-encodes the result as MP4. Clips are capped at ~12 seconds and frames wider than 960px are downscaled, to keep processing time and page size reasonable for a demo app; there's no audio track in the output since OpenCV's video I/O is video-only.
-
-Original files are never modified — every filter is applied to an in-memory copy, and uploaded/processed files are deleted from disk right after the response is sent.
-
-## Results
-
-**License plate → black mask**, run through `project/app.py`'s full pipeline:
-
-![Plate masking example](docs/results/plate_before_after.jpg)
-
-**Face → blur, laptop → pixelation**, same image, two different filters chosen automatically by class:
-
-![Face blur and screen pixelation example](docs/results/office_before_after.jpg)
-
-**Crowd scene — 5 faces blurred**, and a useful example of a real failure mode: the solid black box on the sign in the background is a **false-positive plate detection** (a rectangular, high-contrast region the contour detector mistook for a plate). This is a known, documented limitation of the contour-based fallback, not a bug — see [Known Limitations](project/README.md#known-limitations).
-
-![Crowd face blurring with a false-positive plate example](docs/results/street_before_after.jpg)
-
-## Baseline (Phase 0)
-
-Before changing any detector, the current pipeline was measured against a fixed, seeded 300-image subset of the [WIDER FACE](http://shuoyang1213.me/WIDERFACE/) validation set (seed 42; 3,022 ground-truth face boxes), using `eval/prepare_wider_face.py` and `eval/run_baseline.py`. IoU threshold 0.5, per `CLAUDE.md`'s metric definitions. Full numbers: [`eval/results/baseline.csv`](eval/results/baseline.csv).
-
-| Detector | Precision | Recall | Recall (small) | Recall (medium) | Recall (large) | FPS |
-|---|--:|--:|--:|--:|--:|--:|
-| Face — Haar cascade (current default) | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 2.31 |
-| Face — DNN (SSD) | 98.1% | 11.8% | 0.0% | 13.1% | 74.0% | 32.94 |
-| Face — Haar+DNN (production `detect_faces`) | 49.8% | 27.2% | 6.5% | 46.0% | 74.0% | 2.18 |
-
-Size buckets are by the longer side of the ground-truth box: small <32px, medium 32–96px, large >96px.
-
-- **DNN alone is high-precision, low-recall** — 98.1% of its detections are correct, but it finds barely 1 in 10 ground-truth faces overall and **zero small faces** in this subset; it only earns its keep on large faces (74.0%). Haar catches more overall but with far more false positives (47.1% precision).
-- **Combined (production) beats both on recall and precision simultaneously** — merging Haar+DNN with NMS lifts recall from 25.1% (Haar alone) to 27.2%, and precision from 47.1% to 49.8%, with large-face recall jumping to 74.0%. Small-face recall is unchanged at 6.5% — DNN contributes nothing there, so this remains the weak point Phase 2's detector comparison needs to beat, not "faster" or "looks better."
-- **Plates and screens have no ground truth in WIDER FACE** (it's a face-only dataset), so only raw detection counts and FPS are reported, honestly, rather than a fabricated precision/recall: the current Haar+contour plate detector found 310 boxes across the 300 images at 5.26 FPS, and YOLOv8n found 8 screen-class boxes at 21.15 FPS. A labelled plate/screen set is Phase 2's job (`PHASES.md`).
-- FPS above is **single-detector throughput** (one function, single-threaded, no I/O) on the hardware below — not the full three-detector parallel `process_frame()` pipeline end to end, and not comparable to a future video FPS number once tracking/streaming (Phase 1) changes the pipeline shape.
-- The DNN model's weights have an undocumented upstream licence — see `project/README.md`'s DNN section before treating it as more than a local evaluation candidate.
-
-**Hardware:** Apple M5, confirmed native arm64 (`platform.machine()` reports `arm64`, not `x86_64` under Rosetta) in the `.venv` interpreter, macOS 26.6.2, CPU only — no GPU used by any of these detectors. Python 3.12.5, opencv-python 4.14.0.94, ultralytics 8.4.161.
-
-Reproduce with:
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r project/requirements.txt -r eval/requirements.txt
-python eval/prepare_wider_face.py   # downloads WIDER FACE val (~365MB, cached after first run)
-python eval/run_baseline.py         # writes eval/results/baseline.csv
-```
-
-Known issues and fragile spots found while building this baseline (Flask debug mode exposed on `0.0.0.0`, non-H.264 video output, zero box padding before redaction, and more) are documented with file:line references in [`docs/AUDIT.md`](docs/AUDIT.md) — nothing was fixed yet, this phase only measures and records.
+The original coursework pipeline remains at `/legacy` for comparison. It uses
+Haar+DNN faces, Haar+contour plates and YOLOv8 screen detection. It is not the
+default interface.
 
 ## Quick start
 
+Requirements: Python 3.12 and FFmpeg with `libx264`.
+
 ```bash
-cd project
-pip install -r requirements.txt
-python app.py
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r project/requirements.txt -r eval/requirements.txt
+python scripts/download_yunet.py
+python project/app.py
 ```
 
-Then open `http://127.0.0.1:5000`, upload an image or short video, and download the filtered result.
+Open `http://127.0.0.1:5000/review`.
 
-Full setup (including the optional DNN face model), architecture notes, and the complete list of known limitations live in **[project/README.md](project/README.md)**.
+The YuNet model is downloaded into the git-ignored `project/models/` directory
+and verified against a pinned SHA-256 checksum. The app does not download a
+model while processing footage.
 
-## Performance: environment variables
+## How selection works
 
-| Variable | Default | Effect |
+1. Upload an image or video and select Creator or Journalist.
+2. Wait for local analysis to finish.
+3. Pause on a clear frame and draw tightly around each face to keep visible.
+4. Preview the result. Every other detected face remains hidden.
+5. Inspect the clip, add manual hide regions if needed, then export.
+
+A drawn rectangle is matched to one detected face track. It is not treated as
+a stationary hole in the mask. Ambiguous and unmatched selections are rejected.
+Tracking is motion-based, not identity recognition, so crossings and re-entry
+must be reviewed.
+
+## Profiles
+
+| Setting | Creator | Journalist |
 |---|---|---|
-| `MAX_CLIP_SECONDS` | unset (unlimited) | Caps how much of a clip is processed. |
-| `DETECTION_STRIDE` | `1` (every frame) | Run detection every Kth frame; the tracker's gap-fill bridges the rest. See warning below. |
-| `PRIVACY_PROFILE` | unset | Set to `journalist` to force `DETECTION_STRIDE=1` regardless of the setting above (a stopgap ahead of a real profile system — see `PHASES.md` Phase 4). |
+| Classes in the current UI | Faces only | Faces only |
+| Face filter | Strong Gaussian blur | Solid fill |
+| Box padding | 15% | 25% |
+| Audio default | Keep | Mute |
+| Metadata removal | Yes | Yes |
+| Report | Yes | Yes |
 
-**`DETECTION_STRIDE` trade-off — read before using it.** Face/plate detection is the dominant per-frame cost (measured: ~376ms and ~176ms/frame respectively on a real portrait clip, vs ~1ms for tracking and ~77ms for redaction — see `docs/HANDOFF.md` for the full profiling breakdown). Setting `DETECTION_STRIDE=K` runs the detectors every Kth frame instead of every frame, and lets the existing tracker gap-fill the skipped frames. This does **not** weaken the core guarantee that every raw detection is redacted the instant it's found — that guarantee only ever applies to frames detection actually runs on. What it does mean: **a face, plate, or screen that first appears on a skipped frame is not redacted until the next detection frame runs — up to (K-1) frames of exposure for something brand new.** An already-tracked object keeps being redacted via gap-fill in the meantime; a genuinely new one does not. This is why Journalist mode always forces K=1 — CLAUDE.md's non-negotiable #2 ("a missed detection is a failure") means recall is never traded for speed in that profile.
+Both profiles currently use YuNet at confidence `0.8`. Journalist mode changes
+redaction strength, padding and audio behavior; it is not a guarantee that every
+face will be detected.
+
+## Measured face-detection results
+
+The fixed evaluation set is a seeded 300-image WIDER FACE validation subset
+containing 3,022 ground-truth boxes. Matching uses IoU ≥ 0.5. These are
+detector-only CPU measurements, not end-to-end export speeds.
+
+| Detector | Precision | Recall | Small recall | Medium recall | Large recall | FPS |
+|---|--:|--:|--:|--:|--:|--:|
+| Haar | 47.1% | 25.1% | 6.5% | 44.2% | 59.9% | 4.58 |
+| SSD DNN | 98.1% | 11.8% | 0.0% | 13.1% | 74.0% | 65.48 |
+| Haar+DNN legacy | 49.8% | 27.2% | 6.5% | 46.0% | 74.0% | 4.29 |
+| YuNet 0.6 | 87.3% | 63.9% | 46.3% | 83.5% | 91.1% | 37.87 |
+| **YuNet 0.8, review default** | **98.0%** | **47.9%** | **24.5%** | **73.4%** | **85.6%** | **39.18** |
+
+At the current threshold, YuNet produced 29 false positives, compared with 828
+for the legacy Haar+DNN path on the same images. The higher threshold was chosen
+to address severe false boxes in interactive review, but its 47.9% recall means
+missed small and occluded faces remain a material limitation.
+
+Reproduce the results:
+
+```bash
+python eval/prepare_wider_face.py
+python eval/run_baseline.py
+python eval/compare_yunet.py
+```
+
+Local results are stored in `eval/results/baseline_local_arm64.csv` and
+`eval/results/yunet_local_arm64.csv`. FPS was measured on arm64 macOS with
+Python 3.12.14, OpenCV 4.14.0.94 and no GPU; performance will vary by machine.
+
+## Privacy and safety behavior
+
+- Missing track choices default to hidden.
+- Every raw detection is included in that frame's redaction output. Tracking
+  may add smoothing and gap-fill boxes but does not filter raw detections.
+- The padded union of the raw and smoothed box is redacted, so smoothing cannot
+  expose part of the current detection.
+- Manual hide regions take precedence over keep-visible choices.
+- The source upload is deleted after export, cancellation, error or expiry.
+- Review jobs expire after 30 minutes of inactivity and active work has a
+  one-hour limit.
+- Source frames are decoded on demand and are not written as separate files.
+- Model failures are surfaced instead of silently falling back to Haar.
+- Flask defaults to debug off and binds only to `127.0.0.1`.
+
+## Video behavior
+
+- Frames stream one at a time; the entire video is never loaded into memory.
+- Detection runs on a copy capped at 960 pixels wide; boxes are scaled back and
+  filters are applied at full resolution.
+- Rotation is read with `ffprobe` and applied explicitly.
+- Frame timing is normalized to the measured average frame rate.
+- Export uses H.264, `yuv420p` and `+faststart` for browser compatibility.
+- The first audio stream is encoded to AAC when audio is kept.
+- Source metadata, chapters and extra data streams are not copied.
+
+The `/legacy` path also supports `MAX_CLIP_SECONDS`, `DETECTION_STRIDE` and
+`PRIVACY_PROFILE`. A detection stride above 1 can expose a newly appearing
+object for up to `K-1` frames; it is not used by the selective review path.
 
 ## Testing
 
 ```bash
-python -m pytest tests/
+python -m pytest -q
+node --test tests/js/test_preview.cjs
 ```
 
-Synthetic boxes and small sample/generated clips only, per `CLAUDE.md` — no large media files in the test suite.
+Current result: **103 Python tests and 4 JavaScript tests pass**. The suite
+covers metrics, tracking continuity, raw-box coverage, video streaming, audio,
+rotation helpers, metadata removal, selection validation, session isolation,
+cleanup and browser masking.
 
-**Known gap — rotation metadata:** phone-recorded portrait clips often carry a rotation hint in container metadata rather than physically rotated pixels. This machine's ffmpeg build (9.0.2) could not be made to write that metadata into a test fixture — five different documented methods (`-metadata rotate=`, remux-only, the `h264_metadata` bitstream filter as both a tag and an SEI option, and the `-rotate` encoder option) all failed or produced metadata `ffprobe` itself couldn't decode back out, on this build specifically. Phase 1's video pipeline (`project/core/video.py`) reads rotation via `ffprobe` and compensates with `cv2.rotate()` itself rather than trusting OpenCV's auto-orientation flags — its unit tests mock the ffprobe rotation value rather than depending on a real fixture this environment can't produce. There is no automated end-to-end test with a real rotated file: check real portrait phone clips manually before relying on this path.
+## Known limitations
 
-## Repo layout
+- YuNet can miss small, profile, blurred or occluded faces. Review every frame.
+- Track IDs are based on motion and overlap. Crossings, fast motion and re-entry
+  can split or switch tracks.
+- There is no measured frame-level or track-level leak rate yet because the
+  required video ground truth has not been annotated.
+- Variable frame timing is normalized rather than preserved exactly.
+- Browser blur is an approximation; export uses the full-resolution OpenCV
+  filter.
+- Face redaction does not hide voice, clothing, gait, location or context.
+- Real rotation-tagged phone footage still needs broader manual verification.
+- The legacy plate detector remains noisy and is not enabled in the simplified
+  face-only review interface.
 
+## Models, data and licences
+
+- **YuNet 2023mar weights:** MIT licence; fetched by
+  `scripts/download_yunet.py`, revision and checksum pinned. Licence text is in
+  `docs/YUNET_LICENSE.txt`.
+- **WIDER FACE:** used only for local evaluation; dataset files are ignored and
+  regenerated by `eval/prepare_wider_face.py`.
+- **Legacy OpenCV SSD weights:** fetched only for baseline comparison. The
+  upstream weights repository has no licence file, so the weights are not
+  bundled or used by the current review pipeline.
+- **Ultralytics YOLOv8:** used only by the legacy screen detector and subject to
+  Ultralytics' AGPL terms.
+
+Do not commit model weights, datasets or personal footage.
+
+## Repository map
+
+```text
+project/app.py                 Flask entry point and legacy route
+project/review_api.py          Session-owned review API
+project/core/faces.py          YuNet adapter
+project/core/tracking.py       IDs, smoothing, gap filling and padding
+project/core/review.py         Analysis, preview, export and report
+project/core/jobs.py           Background jobs, cancellation and expiry
+project/core/selection.py      Fail-closed keep/hide validation
+project/core/video.py          Video probing and legacy streaming utilities
+project/static/review.js       Interactive review controller
+project/static/preview.js      Browser masking renderer
+eval/                          Reproducible metrics and saved results
+tests/                         Python and JavaScript tests
+docs/AUDIT.md                  Historical audit of the original coursework app
+docs/HANDOFF.md                Current implementation handoff
+PHASES.md                      Roadmap and completion status
 ```
-.
-├── project/            ← the Flask app (see project/README.md)
-├── docs/results/        ← before/after samples used above
-├── images_CV_AAT/       ← sample test images
-└── instructions.txt     ← original PRD / build spec
-```
 
+## Next work
 
+1. Annotate 5–10 short videos following `eval/video_gt/README.md`.
+2. Measure frame-level and track-level leak rates.
+3. Tune the precision/recall operating point from video evidence.
+4. Replace and evaluate the legacy plate detector if plate support returns to
+   the main review interface.
+5. Add packaging, CI and a documented deployment path.

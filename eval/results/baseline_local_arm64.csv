@@ -1,0 +1,6 @@
+detector,n_images,n_gt_boxes,n_pred_boxes,tp,fp,fn,precision,recall,recall_small,recall_medium,recall_large,fps,notes
+faces_haar,300,3022,1615,760,855,2262,0.47058823529411764,0.2514890800794176,0.06545454545454546,0.44166666666666665,0.5993150684931506,4.577473012618928,
+faces_dnn,300,3022,364,357,7,2665,0.9807692307692307,0.11813368630046327,0.0,0.13055555555555556,0.7397260273972602,65.4845760756669,
+faces_haar_dnn_production,300,3022,1649,821,828,2201,0.49787750151607035,0.27167438782263403,0.06545454545454546,0.4601851851851852,0.7397260273972602,4.291478533226438,
+plates_haar_contour_production,300,nan,310,nan,nan,nan,nan,nan,nan,nan,nan,10.446085045642665,"no plate ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"
+screens_yolov8n_production,300,nan,8,nan,nan,nan,nan,nan,nan,nan,nan,44.7123200940351,"no screen ground truth in WIDER FACE; count/FPS only, see PHASES.md Phase 2"

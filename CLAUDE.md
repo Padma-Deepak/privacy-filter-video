@@ -6,26 +6,42 @@ This file is read at the start of every session. Follow it. If something here co
 
 A local-first video and image anonymizer for **creators** (posting street or travel footage) and **journalists** (publishing footage with bystanders or sources in it).
 
-A user uploads a clip, sees every detected face and plate with a persistent track ID, chooses which to hide or keep, and exports a clean video **with audio intact** (or muted, in Journalist mode). Two presets, Creator and Journalist, share one core pipeline.
+A user uploads a clip, sees detected face tracks, chooses who may remain visible,
+and exports a clean video **with audio intact** (or muted, in Journalist mode).
+Two presets, Creator and Journalist, share one face-only review pipeline. Plate
+and screen work remains available only in the legacy comparison route.
 
 The goal is a **portfolio project for computer vision roles**. That means measured results, honest limitations and reproducible experiments matter more than feature count. Every claim in the README must be backed by a number produced by a script in this repo.
 
-## Starting point (verify against the code, do not trust this)
+## Current implementation (verify against the code)
 
-The repo began as a coursework demo: Flask + OpenCV + YOLOv8. As of the last README it:
-- Detects faces (Haar cascade, optional SSD DNN), plates (Haar + Canny/contour heuristic) and screens (YOLOv8n, COCO classes tv/laptop/cell phone).
-- Applies a Gaussian blur to faces, a black box to plates and pixelation to screens.
-- Runs the same per-frame pipeline (`process_frame()` in `project/detector.py`) over video, capped at ~12 s, downscaled to 960 px wide, with no audio.
-- Has known weaknesses: contour plate detector gives false positives, boxes flicker across frames, no recall numbers.
+The default `/review` workflow is a face-only selective anonymizer:
+
+- YuNet detects faces at the confidence configured by the active profile.
+- `ClassTracker` assigns per-job IDs, smooths boxes and fills short detection gaps.
+- Users draw around tracks to keep visible; every unselected track hides by default.
+- Analysis records geometry once and export reuses it at full resolution.
+- FFmpeg produces H.264 video, keeps or mutes audio and strips source metadata.
+- Session-owned background jobs support progress, cancellation and expiry.
+- Creator and Journalist YAML profiles control filtering, padding, audio and reports.
+
+The original Haar/DNN face, Haar/contour plate and YOLO screen implementation is
+retained at `/legacy` for historical comparison. It is not the default product path.
 
 Read the actual code before changing anything. Where this file and the code disagree, the code is the truth and this file should be corrected.
 
 ## Key decisions (already made)
 
-- **Detection stack:** YOLOv8 (Ultralytics) for plates, screens and people-class detection. For faces, compare candidates on data (Haar, existing DNN, YuNet, SCRFD, a YOLOv8-face model) and pick by measured recall and FPS. Do not choose by reputation.
+- **Detection stack:** the current review default is YuNet 2023mar at confidence
+  0.8, chosen after a same-dataset comparison with Haar and SSD DNN. Continue to
+  choose thresholds or replacement models from measured recall, precision, false
+  positives and FPS rather than reputation. Plates and screens remain legacy-only.
 - **Tracking:** use a detector-agnostic tracker (`supervision.ByteTrack` or equivalent) so the face detector can be swapped freely. Do not couple tracking to the Ultralytics `.track()` API.
 - **Licensing:** Ultralytics is AGPL-3.0. Keep the repo public and add a `LICENSE` and a "Licenses" section in the README listing every model and dataset with its licence. Before using any third-party weights or dataset, check its licence and record it.
 - **DNN face model licence gap:** the optional `res10_300x300_ssd_iter_140000.caffemodel` (fetched by `scripts/download_models.py`, see `project/README.md`) has no upstream licence file at all — confirmed via the GitHub API, and a known gap flagged by the OpenCV community itself. Do not bundle these weights in the Docker image or the hosted demo (Phases 5-6) unless this is resolved first (e.g. a clear licence is found, or the model is swapped for one with clear provenance, such as YuNet).
+- **YuNet licensing:** `face_detection_yunet_2023mar.onnx` is fetched from a
+  pinned OpenCV Zoo revision, checksum-verified and covered by the MIT licence in
+  `docs/YUNET_LICENSE.txt`. The weights remain ignored by Git.
 - **Local-first:** the tool must work fully offline. No cloud APIs, no telemetry.
 - **Compute:** develop and benchmark locally. If fine-tuning is too slow on CPU, put a Colab/Kaggle notebook in `training/` and commit the resulting weights (or a download script) plus the exact training config.
 - **Demo:** a hosted demo (Hugging Face Space, Docker) must work with bundled sample clips **and** accept any user upload. See the demo rules below.
@@ -40,21 +56,18 @@ Read the actual code before changing anything. Where this file and the code disa
 6. **Reproducibility.** Pin dependencies. Every number in the README comes from a script in `eval/` that can be re-run with one command. Set random seeds.
 7. **Small, reviewable changes.** One phase at a time, one logical change per commit.
 
-## Repo layout (target)
+## Repository layout
 
 ```
-project/                 Flask app (keep, refactor gradually)
+project/                 Flask app
   app.py
-  core/                  detectors, tracking, redaction, video io (new)
-  profiles/              creator.yaml, journalist.yaml (new)
-eval/                    metrics scripts, dataset prep, results/*.csv (new)
-training/                plate detector fine-tuning config and notebook (new)
-demo/                    Dockerfile, sample clips, HF Space files (new)
+  review_api.py          selective-review API
+  core/                  detection, tracking, jobs, redaction, video I/O
+  profiles/              creator.yaml, journalist.yaml
+eval/                    metrics scripts, dataset prep, results/*.csv
 tests/                   pytest
 docs/results/            before/after images, GIFs, metric tables
 ```
-
-Do not reorganise the repo in a single big commit. Move code gradually as each phase touches it.
 
 ## Working rules for Claude Code
 

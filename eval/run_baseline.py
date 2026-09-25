@@ -1,18 +1,18 @@
 """
-run_baseline.py — score the CURRENT detectors in project/detector.py against
+run_baseline.py — score the original/legacy detectors in project/detector.py against
 the seeded WIDER FACE subset built by prepare_wider_face.py, and write
 eval/results/baseline.csv.
 
-This does not change or improve any detector — it only measures what
-project/detector.py already does today, so later phases have a "before"
-number. Run `python eval/prepare_wider_face.py` first if
+This does not change or improve any detector. It preserves the "before" numbers
+for the `/legacy` comparison path; selective review uses YuNet and is measured by
+`eval/compare_yunet.py`. Run `python eval/prepare_wider_face.py` first if
 eval/data/wider_face_subset/ground_truth.json doesn't exist yet.
 
 Face detectors evaluated (against real ground truth, precision/recall/FPS):
   - haar            : detector._detect_faces_haar only
   - dnn             : detector._detect_faces_dnn only (skipped, with a note in
                        the CSV, if project/models/*.caffemodel is absent)
-  - haar+dnn (prod) : detector.detect_faces — the actual function app.py calls
+  - haar+dnn (legacy): detector.detect_faces — used by the `/legacy` route
 
 Plate and screen detectors are also run and timed (FPS, raw detection count)
 for reference, but WIDER FACE has no plate/screen ground truth, so their
@@ -178,7 +178,7 @@ def main() -> None:
         })
 
     if dnn_available:
-        print("Evaluating: haar+dnn (production detect_faces)")
+        print("Evaluating: haar+dnn (legacy detect_faces)")
         rows.append(_eval_face_detector(
             "faces_haar_dnn_production",
             lambda img, gray: detector.detect_faces(img, gray, models_dir),
@@ -192,7 +192,7 @@ def main() -> None:
         print("Skipping: haar+dnn (production) — DNN unavailable, identical to faces_haar")
         row = dict(rows[0])
         row["detector"] = "faces_haar_dnn_production"
-        row["notes"] = "DNN unavailable at run time, so production detect_faces() == faces_haar (not re-run)"
+        row["notes"] = "DNN unavailable at run time, so legacy detect_faces() == faces_haar (not re-run)"
         rows.append(row)
 
     print("Timing: plates (haar+contour, production) — no ground truth on this dataset")

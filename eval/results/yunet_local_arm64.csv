@@ -1,0 +1,3 @@
+detector,n_images,n_gt_boxes,n_pred_boxes,tp,fp,fn,precision,recall,recall_small,recall_medium,recall_large,fps,notes
+yunet-0.6,300,3022,2213,1932,281,1090,0.8730230456394035,0.6393117140966248,0.463030303030303,0.8351851851851851,0.910958904109589,37.87370477327181,"OpenCV YuNet 2023mar; full image resolution; detection only, not video export FPS"
+yunet-0.8,300,3022,1476,1447,29,1575,0.9803523035230353,0.47882197220383854,0.24484848484848484,0.7342592592592593,0.8561643835616438,39.17771866606683,"OpenCV YuNet 2023mar; full image resolution; detection only, not video export FPS"

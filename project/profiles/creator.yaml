@@ -1,0 +1,14 @@
+name: Creator
+classes: [faces]
+filters: {faces: blur, plates: solid, screens: pixelate}
+padding: 0.15
+blur_kernel: 99
+blur_sigma: 30
+pixel_size: 15
+track_buffers: {faces: 30, plates: 5, screens: 15}
+audio: keep
+strip_metadata: true
+report: true
+detector: yunet
+face_confidence: 0.8
+screen_confidence: 0.4

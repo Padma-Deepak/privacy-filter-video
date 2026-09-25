@@ -55,8 +55,8 @@ def test_detection_stride_is_env_overridable(monkeypatch):
 
 
 def test_journalist_profile_forces_detection_stride_to_one(monkeypatch):
-    # Stopgap ahead of Phase 4's real profile system: Journalist mode must
-    # never trade recall for speed, so it overrides any DETECTION_STRIDE.
+    # Legacy-route compatibility: Journalist must never trade recall for speed,
+    # so it overrides any DETECTION_STRIDE.
     app_module = _reload_app(monkeypatch, DETECTION_STRIDE="5", PRIVACY_PROFILE="journalist")
     assert app_module.DETECTION_STRIDE == 1
 

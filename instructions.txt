@@ -1,4 +1,7 @@
 # PRD — Smart Visual Privacy Protection
+HISTORICAL SOURCE DOCUMENT — NOT THE CURRENT PRODUCT SPECIFICATION
+This file preserves the original coursework prompt and contains duplicated text.
+The current behavior is documented in README.md and docs/HANDOFF.md.
 
 ---
 

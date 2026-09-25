@@ -9,7 +9,7 @@ import base64
 import subprocess
 import uuid
 
-from flask import Flask, render_template, request, abort
+from flask import Flask, render_template, request, abort, redirect, url_for
 from detector import process_image
 from core.video import process_video_streaming
 
@@ -67,10 +67,9 @@ MAX_CLIP_SECONDS = float(_max_clip_seconds_raw) if _max_clip_seconds_raw else No
 _detection_stride_raw = os.environ.get("DETECTION_STRIDE", "1").strip()
 DETECTION_STRIDE = max(1, int(_detection_stride_raw)) if _detection_stride_raw else 1
 
-# Stopgap ahead of Phase 4's real Creator/Journalist profile system: until
-# profiles exist as a first-class concept, PRIVACY_PROFILE=journalist forces
-# full per-frame detection, because Journalist mode must never trade recall
-# for speed (CLAUDE.md non-negotiable #2 — a missed detection is a failure).
+# Legacy-route compatibility: the selective review has first-class YAML profiles,
+# while /legacy still reads this environment switch. Journalist forces full
+# per-frame detection because it must never trade recall for speed.
 PRIVACY_PROFILE = os.environ.get("PRIVACY_PROFILE", "").strip().lower()
 if PRIVACY_PROFILE == "journalist":
     DETECTION_STRIDE = 1
@@ -125,6 +124,11 @@ def _preview_data_url(path, ext, is_video):
 
 @app.route("/", methods=["GET"])
 def index():
+    return redirect(url_for("review.page"))
+
+
+@app.route("/legacy", methods=["GET"])
+def legacy():
     return render_template("index.html")
 
 
@@ -193,6 +197,10 @@ def too_large(e):
 @app.errorhandler(500)
 def server_error(e):
     return render_template("index.html", error=e.description), 500
+
+
+from review_api import register_review
+register_review(app, BASE_DIR, ALLOWED_IMAGE_EXTENSIONS, ALLOWED_VIDEO_EXTENSIONS)
 
 
 if __name__ == "__main__":
